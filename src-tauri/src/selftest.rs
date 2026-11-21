@@ -66,13 +66,13 @@ pub fn run_all(s: &Settings, data: &Path) -> Vec<Check> {
         }
     });
     let has_ps4 = installed.contains(&"shadPS4") || installed.contains(&"SharpEmu");
-    run(&mut out, "PS4 support", || {
+    if crate::PS4_ENABLED { run(&mut out, "PS4 support", || {
         if has_ps4 {
             ("pass", "a PS4 engine is installed".into())
         } else {
             ("warn", "no PS4 engine (only needed for PS4 games)".into())
         }
-    });
+    }); }
 
     let engine_path = crate::engines::find(crate::engines::def("kyty").unwrap(), &s.engine_path("kyty"), data);
     run(&mut out, "KytyPS5 responds", || match &engine_path {

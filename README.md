@@ -5,8 +5,8 @@
 <h1 align="center">Strata</h1>
 
 <p align="center">
-  A calm, open-source game launcher for PS5 and PS4 game dumps on Windows.<br>
-  It drives four open-source engines, picks the right one for each game, tunes itself to your PC and steps aside the moment you press Play.
+  A calm, open-source game launcher for PS5 game dumps on Windows.<br>
+  It drives three open-source engines, falls back from one to the next, tunes itself to your PC and steps aside the moment you press Play.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.11.0%20beta-ff7a2f">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.10.0%20beta-ff7a2f">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-5163f5">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--2.0-2fcb72">
   <img alt="Built with" src="https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-a6abb4">
@@ -33,16 +33,14 @@
 
 | | |
 |---|---|
-| **Four engines, one Play button** | PS5 games run on [KytyPS5](https://github.com/KytyPS5/KytyPS5), [SharpEmu](https://github.com/sharpemu/sharpemu) or [AnyPS5](https://github.com/boykopovar/AnyPS5); PS4 games on [shadPS4](https://github.com/shadps4-emu/shadPS4). Strata tells PS4 and PS5 dumps apart by itself. If an engine crashes or closes right away, the next one starts automatically and every attempt goes to the log; the engine that worked is remembered per game. |
+| **Three engines, one Play button** | Games run on [KytyPS5](https://github.com/KytyPS5/KytyPS5), [SharpEmu](https://github.com/sharpemu/sharpemu) or [AnyPS5](https://github.com/boykopovar/AnyPS5). If an engine crashes or closes right away, the next one starts automatically and every attempt goes to the log; the engine that worked is remembered per game. |
 | **Tunes itself to your PC** | Reads your GPU, CPU and memory through Vulkan — the same way the engine sees them — and applies a profile. An RTX 4050 laptop starts at 1080p, an RTX 3050 at 720p. Laptops with two GPUs are pinned to the dedicated one; Intel CPUs get compatibility patches switched on. |
 | **A shelf, not a spreadsheet** | Games appear with their own cover and background art. Browse with a controller, keyboard or mouse. Favorites, play time, status and notes for every game. |
 | **Memory limit with − and +** | Decide how much RAM a game may use. *Soft* keeps physical memory under the limit and pages out the rest; *strict* closes the game if it goes over. |
 | **Settings that say what they cost** | Every option is tagged **+ FPS**, **− FPS**, **Fix**, **Experimental** or **Debug**. |
 | **Per-game settings** | Give one game its own display, rendering, performance, controller keys and engine; changed options are marked with a dot, and one button goes back to the global settings. |
 | **Refresh rate that follows your monitor** | *Auto* reads the monitor Strata is on — 144 Hz, 280 Hz, anything — and passes it to the engine. |
-| **Keyboard and mouse keys** | One key map written in each engine's own format (shadPS4 and AnyPS5), per game if you want. |
-| **PS4 .pkg install** | Pick a `.pkg` you dumped from your own console — game, update or DLC — and Strata unpacks it where shadPS4 expects it (`<game>-UPDATE`, `addcont/<ID>`). Loose `.pkg` files in your folders are offered for install. Store packages are encrypted and refused. |
-| **Mods and patches (PS4)** | A per-game mods folder you can switch on and off, and a patch file (XML) passed to shadPS4. |
+| **Keyboard and mouse keys** | One key map written in the engine's own format (AnyPS5), per game if you want. |
 | **Save backups** | Back up the saves of one game or of all of them (shader caches optional) into a single zip and put them back later. |
 | **Developer mode** | Live engine logs with filters, a twelve-point self-test, the exact engine command line and a one-click diagnostics report. |
 | **Small and quiet** | Tauri + Rust on top of the WebView2 already in Windows: a ~10 MB app that sits idle while you play. |
@@ -60,7 +58,7 @@
 ## Get started
 
 1. Download the installer or the portable zip from **[Releases](../../releases)**.
-2. On first launch the welcome screen checks your PC, downloads the PS5 engines (and, if you play PS4 games, shadPS4) from their official GitHub releases and creates a `Games` folder.
+2. On first launch the welcome screen checks your PC, downloads the engines from their official GitHub releases and creates a `Games` folder.
 3. Put game folders you dumped from your own console in that folder (or add the folder where they already are) and press **Play**.
 
 **Requirements:** Windows 10 (1803+) or 11, 64-bit · x86-64 CPU with AVX2 · Vulkan 1.3 GPU with a current driver · 16 GB RAM recommended.
@@ -73,30 +71,29 @@ Full guide — every setting explained, memory limit, per-game settings, trouble
 Games\
   My Game\
     eboot.bin
-    sce_sys\param.json     PS5: title, ID, version   (PS4 dumps have param.sfo)
+    sce_sys\param.json     title, ID, version
     sce_sys\icon0.png      cover
     sce_sys\pic0.png       background
     strata\logo.png        optional: your own transparent logo
   Another Game.zar         ZArchive, mounted read-only
 ```
 
-A folder only counts as a game when it has `eboot.bin` **and** `sce_sys/param.json` or `sce_sys/param.sfo`; tools and payload folders are skipped (Developer mode lists them).
+A folder only counts as a game when it has `eboot.bin` **and** `sce_sys/param.json`; tools and payload folders are skipped (Developer mode lists them). PS4 support is built but switched off in this release.
 
 ### Engines
 
-| Engine | Plays | Strata starts it with | Keys from Strata |
-|---|---|---|---|
-| KytyPS5 | PS5 | full command line built from your settings | its own layout |
-| SharpEmu | PS5, PS4 (experimental) | `SharpEmu <eboot.bin>` | its own layout |
-| AnyPS5 | PS5 | converts the game once, then runs the result | yes (`anyps5-input.ini`) |
-| shadPS4 | PS4 | `shadPS4 --fullscreen … -g <eboot.bin>` | yes (`user/input_config`) |
+| Engine | Strata starts it with | Keys from Strata |
+|---|---|---|
+| KytyPS5 | full command line built from your settings | its own layout |
+| SharpEmu | `SharpEmu <eboot.bin>` | its own layout |
+| AnyPS5 | converts the game once, then runs the result | yes (`anyps5-input.ini`) |
 
 Downloads go to `data/engines/<engine>/bin`; each engine's saves and caches live in `data/engines/<engine>/user`, so updating an engine never touches them.
 
 ## Important
 
 - Strata **does not include, download or link to games, firmware, BIOS files or keys.** Use only games you dumped from hardware you own.
-- Game compatibility comes from the engines, which are young and changing fast. PS4 emulation (shadPS4) is the most mature; PS5 engines run many 2D and indie games, while big 3D games often stop at menus or do not start yet.
+- Game compatibility comes from the engines, which are young and changing fast. They run many 2D and indie games; big 3D games often stop at menus or do not start yet.
 - Game discs cannot be read in a PC drive — they are encrypted. Any download claiming otherwise is malware.
 - Strata is an independent project, **not affiliated with any console manufacturer**.
 
@@ -122,7 +119,7 @@ src-tauri/src/
   engine.rs     KytyPS5 command line, starting/watching an engine, exit codes
   controls.rs   one key map → shadPS4 / AnyPS5 control files
   backups.rs    save + shader backups (zip with a manifest)
-  pkginstall.rs PS4 fake-PKG install (game / update / DLC), mods folder, installed extras
+  pkginstall.rs PS4 package install (built, switched off by PS4_ENABLED in lib.rs)
   display.rs    monitor refresh rate for "Auto"
   gpu.rs        Vulkan device list (same order as the engine's --gpu index)
   profile.rs    automatic tiers per GPU family / VRAM
@@ -142,7 +139,7 @@ Use the **[report form on the website](https://strata.gbxstudios.com/report)** o
 
 ## Credits & license
 
-- **[KytyPS5](https://github.com/KytyPS5/KytyPS5)** (GPL-2.0, based on [Kyty](https://github.com/InoriRus/Kyty)), **[SharpEmu](https://github.com/sharpemu/sharpemu)** (GPL-2.0), **[AnyPS5](https://github.com/boykopovar/AnyPS5)** (GPL-2.0) and **[shadPS4](https://github.com/shadps4-emu/shadPS4)** (GPL-2.0) — the engines that run the games. Strata downloads them from their own releases and does not change them.
+- **[KytyPS5](https://github.com/KytyPS5/KytyPS5)** (GPL-2.0, based on [Kyty](https://github.com/InoriRus/Kyty)), **[SharpEmu](https://github.com/sharpemu/sharpemu)** (GPL-2.0) and **[AnyPS5](https://github.com/boykopovar/AnyPS5)** (GPL-2.0) — the engines that run the games. Strata downloads them from their own releases and does not change them.
 - **[orbis-pkg / orbis-pkg-util](https://github.com/videobitva/orbis)** (MIT OR Apache-2.0, used under MIT) — PS4 package reading and extraction.
 - **[Tauri](https://tauri.app)**, **[ash](https://github.com/ash-rs/ash)**, **sysinfo**, **ureq**, **zip** and the Rust ecosystem.
 - Fonts: **Archivo** and **IBM Plex Mono** (SIL Open Font License 1.1, see `ui/fonts`).

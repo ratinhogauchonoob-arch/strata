@@ -24,6 +24,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub const APP_NAME: &str = "Strata";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const APP_CHANNEL: &str = "beta";
+/// PS4 support (shadPS4, PS4 games, .pkg install) is finished in code but held back from
+/// this release while it is tested. Flip to true to turn it on everywhere.
+pub const PS4_ENABLED: bool = false;
 
 pub struct AppState {
     pub data: PathBuf,
@@ -58,6 +61,7 @@ struct Bootstrap {
     settings: Settings,
     engine: Option<String>,
     running: Option<engine::RunningInfo>,
+    ps4: bool,
 }
 
 #[tauri::command]
@@ -84,6 +88,7 @@ fn bootstrap(state: State<AppState>) -> Bootstrap {
         settings: s.clone(),
         engine,
         running: state.running.lock().unwrap().as_ref().map(|r| r.info.clone()),
+        ps4: PS4_ENABLED,
     }
 }
 
@@ -147,7 +152,14 @@ async fn apply_auto_profile(state: State<'_, AppState>) -> Result<Settings, Stri
 async fn scan_games(state: State<'_, AppState>) -> Result<Vec<games::Game>, String> {
     let folders = state.settings.lock().unwrap().library_folders.clone();
     let t = std::time::Instant::now();
-    let (list, skipped, pkgs) = tauri::async_runtime::spawn_blocking(move || games::scan_full(&folders, false)).await.map_err(|e| e.to_string())?;
+    let (mut list, mut skipped, mut pkgs) = tauri::async_runtime::spawn_blocking(move || games::scan_full(&folders, false)).await.map_err(|e| e.to_string())?;
+    if !PS4_ENABLED {
+        for g in list.iter().filter(|g| g.platform == "ps4") {
+            skipped.push(games::Skipped { path: g.path.clone(), reason: "PS4 game: PS4 support comes in a later version".into() });
+        }
+        list.retain(|g| g.platform != "ps4");
+        pkgs.clear();
+    }
     if !pkgs.is_empty() {
         logs::info("library", &format!("{} .pkg file(s) waiting to be installed", pkgs.len()));
     }
@@ -227,6 +239,9 @@ async fn pkg_inspect(state: State<'_, AppState>, path: String, folder: Option<St
 
 #[tauri::command]
 async fn pkg_install(app: AppHandle, state: State<'_, AppState>, path: String, folder: Option<String>, overwrite: bool) -> Result<String, String> {
+    if !PS4_ENABLED {
+        return Err("Installing .pkg files comes in a later version.".into());
+    }
     let plan = pkg_inspect(state.clone(), path.clone(), folder).await?;
     let dest = PathBuf::from(&plan.destination);
     logs::info("pkg", &format!("Installing {} ({} {}) to {}", path, plan.info.kind_name, plan.info.title_id, dest.display()));
@@ -688,6 +703,7 @@ fn engines_status(state: State<AppState>) -> Vec<EngineStatus> {
     let s = state.settings.lock().unwrap();
     engines::ENGINES
         .iter()
+        .filter(|d| PS4_ENABLED || d.platforms.contains(&engines::Platform::Ps5))
         .map(|d| {
             let p = engines::find(d, &s.engine_path(d.id), &state.data);
             EngineStatus {
@@ -695,7 +711,7 @@ fn engines_status(state: State<AppState>) -> Vec<EngineStatus> {
                 name: d.name,
                 repo: d.repo,
                 summary: d.summary,
-                platforms: d.platforms.iter().map(|p| p.as_str()).collect(),
+                platforms: d.platforms.iter().filter(|p| PS4_ENABLED || **p == engines::Platform::Ps5).map(|p| p.as_str()).collect(),
                 archives: d.archives,
                 release: p.as_ref().and_then(|x| x.parent()).and_then(|x| x.file_name()).map(|n| n.to_string_lossy().into_owned()),
                 path: p.map(|x| x.to_string_lossy().into_owned()),
@@ -708,7 +724,7 @@ fn engines_status(state: State<AppState>) -> Vec<EngineStatus> {
 #[tauri::command]
 async fn download_engine(app: AppHandle, state: State<'_, AppState>, id: Option<String>) -> Result<String, String> {
     let id = id.unwrap_or_else(|| "kyty".into());
-    let def = engines::def(&id).ok_or("Unknown engine.")?;
+    let def = engines::def(&id).filter(|d| PS4_ENABLED || d.platforms.contains(&engines::Platform::Ps5)).ok_or("Unknown engine.")?;
     let data = state.data.clone();
     let app2 = app.clone();
     let dest = tauri::async_runtime::spawn_blocking(move || {

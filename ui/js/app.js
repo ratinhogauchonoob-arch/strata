@@ -71,6 +71,7 @@ const S = {
 };
 const ENGINE_NAME = { kyty: "KytyPS5", sharpemu: "SharpEmu", anyps5: "AnyPS5", shadps4: "shadPS4" };
 const PS5_SET = ["kyty", "sharpemu", "anyps5"];
+const PS4 = () => !!S.boot?.ps4; // PS4 support is held back in this release
 const haveEngine = (platform) => S.engines.some((e) => e.path && e.platforms.includes(platform));
 
 const VIEWS = ["home", "library", "settings", "dev"];
@@ -338,9 +339,9 @@ function renderLibrary() {
         search,
         seg("filter", [["all", "All"], ["fav", "Favorites"], ["recent", "Recent"], ["playable", "Playable"]]),
         seg("layout", [["grid", "Grid"], ["list", "List"]]),
-        h("button", { class: "btn small", "data-nav": true, onclick: () => installPkg() }, "Install .pkg"),
+        PS4() ? h("button", { class: "btn small", "data-nav": true, onclick: () => installPkg() }, "Install .pkg") : null,
         h("button", { class: "btn small", "data-nav": true, onclick: refresh }, "Refresh"))),
-    pkgBanner(),
+    PS4() ? pkgBanner() : null,
     h("div", { class: "scroll", id: "libbody" }));
   renderLibraryBody(list);
 }
@@ -520,7 +521,7 @@ function renderSettings() {
   const root = $("#view-settings .page");
   const game = S.perGame ? S.games.find((g) => g.id === S.perGame) : null;
   if (S.perGame && !game) S.perGame = null;
-  const sections = SECTIONS.filter((s) => (S.perGame ? s.perGame : s.perGame !== "only") && (!s.devOnly || S.settings.dev.enabled));
+  const sections = SECTIONS.filter((s) => (S.perGame ? s.perGame : s.perGame !== "only") && (!s.devOnly || S.settings.dev.enabled) && (!s.ps4Only || PS4()));
   if (!sections.find((s) => s.id === S.section)) S.section = sections[0].id;
 
   let lastGroup = null;
@@ -786,6 +787,7 @@ function paneLibrary(pane) {
   add(pane, h("div", { style: { display: "flex", gap: "10px", marginTop: "22px" } },
     h("button", { class: "btn primary", "data-nav": true, onclick: addFolder }, "Add folder"),
     h("button", { class: "btn", "data-nav": true, onclick: async () => { await refresh(); renderPane(); toast(`${S.games.length} games found.`, "ok"); } }, "Scan again")));
+  if (!PS4()) return;
   const target = h("div", { class: "help mono", style: { wordBreak: "break-all" } }, "…");
   invoke("pkg_target_folder").then((t) => (target.textContent = t)).catch(() => (target.textContent = "—"));
   add(pane, h("h4", { class: "sub" }, "Installing .pkg games"),
@@ -848,7 +850,7 @@ function paneEngines(pane) {
   add(pane, 
     h("h4", { class: "sub" }, "Automatic engine choice"),
     orderRow("PS5 games", "order_ps5", "ps5"),
-    orderRow("PS4 games", "order_ps4", "ps4"),
+    PS4() ? orderRow("PS4 games", "order_ps4", "ps4") : null,
     field({ key: "engines.auto_fallback", type: "toggle", label: "Try the next engine automatically", help: "If an engine closes or crashes right away, Strata starts the next one and writes everything to the log." }, S.settings),
     field({ key: "engines.fail_seconds", type: "number", label: "Counts as failed before", min: 5, max: 120, step: 5, suffix: "s", requires: "engines.auto_fallback", help: "An engine that closes sooner than this is treated as not working for that game." }, S.settings),
     h("div", { class: "field" }, h("div", { class: "name" }, "Engines folder"), h("div", { class: "help" }, "Releases, saves and caches of every engine."),
@@ -912,7 +914,8 @@ function paneControls(pane) {
       own.controls ? h("button", { class: "btn small", "data-nav": true, onclick: () => { own.controls = null; save(); renderPane(); } }, "Use global keys again")
         : h("button", { class: "btn small", "data-nav": true, onclick: () => { own.controls = structuredClone(S.settings.controls); own.controls.enabled = true; save(); renderPane(); } }, "Custom keys for this game")));
   }
-  add(pane, h("div", { class: "banner" }, h("span", {}, "Keys apply to shadPS4 (PS4) and AnyPS5. KytyPS5 and SharpEmu use their own fixed layout; the options below this list still apply to KytyPS5.")));
+  add(pane, h("div", { class: "banner" }, h("span", {}, PS4() ? "Keys apply to shadPS4 (PS4) and AnyPS5. KytyPS5 and SharpEmu use their own fixed layout; the options below this list still apply to KytyPS5."
+    : "Keys apply to AnyPS5. KytyPS5 and SharpEmu use their own fixed layout; the options below this list still apply to KytyPS5.")));
   const row = (label, help, ctl) => h("div", { class: "field" + (editable ? "" : " disabled") }, h("div", { class: "name" }, label), help ? h("div", { class: "help" }, help) : null, h("div", { class: "ctl" }, ctl));
   add(pane, 
     row("Let Strata set the keys", "Off = each engine keeps its own default keys. Your old files are kept as .bak.",
@@ -1237,7 +1240,7 @@ function renderWizard(force = false) {
   m.replaceChildren(h("div", { class: "sheet" },
     h("div", { class: "micro" }, "Welcome"),
     h("h2", {}, "Let's set up Strata."),
-    h("p", {}, "Four quick steps. Everything can be changed later in Settings."),
+    h("p", {}, `${PS4() ? "Four" : "Three"} quick steps. Everything can be changed later in Settings.`),
     h("div", { class: "steps" },
       step(1, !!S.settings.auto_profile, p ? `Your PC: ${p.label}` : "Checking your PC…",
         !p ? "" : p.tier === "unsupported" ? (p.reasons[0] || "Update your graphics driver.") : `${p.gpu_name ? shortGpu(p.gpu_name) + " · " : ""}${Math.round((S.sys?.ram_mb || 0) / 1024)} GB RAM — tuned settings ready.`,
@@ -1256,7 +1259,7 @@ function renderWizard(force = false) {
               if (p) { S.settings.engines.paths.kyty = p; S.settings.engine_path = p; await save(true); await loadEngines(); renderWizard(true); renderTop(); if (!haveEngine("ps5")) toast("No KytyPS5 found in that folder.", "warn"); }
             } }, "Choose folder")));
       })(),
-      (() => {
+      !PS4() ? null : (() => {
         const ps4 = S.engines.find((e) => e.id === "shadps4");
         const d = S.downloads.shadps4;
         const skipped = S.settings.engines.skip_ps4;
@@ -1269,7 +1272,7 @@ function renderWizard(force = false) {
             h("button", { class: "btn small", "data-nav": true, disabled: busy("shadps4"), onclick: () => downloadEngine("shadps4") }, "Download"),
             skipped ? null : h("button", { class: "btn small ghost", "data-nav": true, onclick: () => { S.settings.engines.skip_ps4 = true; save(); renderWizard(true); } }, "I don't play PS4")));
       })(),
-      step(4, S.games.length > 0, "Your games", S.games.length ? `${S.games.length} found.` : "Put game folders in the Games folder, or add your own folder.",
+      step(PS4() ? 4 : 3, S.games.length > 0, "Your games", S.games.length ? `${S.games.length} found.` : "Put game folders in the Games folder, or add your own folder.",
         h("div", { style: { display: "flex", gap: "8px" } },
           h("button", { class: "btn small", "data-nav": true, onclick: () => invoke("open_path", { path: S.boot.games_dir }) }, "Open"),
           h("button", { class: "btn small", "data-nav": true, onclick: async () => { await addFolder(); renderWizard(true); } }, "Add folder")))),

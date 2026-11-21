@@ -10,13 +10,14 @@ async def main():
     problems = []
     async with async_playwright() as p:
         b = await p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else await p.chromium.launch()
-        for vw, vh in [(1366, 800), (1024, 640), (1920, 1080)]:
+        # PS4 support is behind a switch: run the normal build in three sizes, then once with ?ps4
+        for vw, vh, ps4 in [(1366, 800, False), (1024, 640, False), (1920, 1080, False), (1366, 800, True)]:
             pg = await b.new_page(viewport={"width": vw, "height": vh})
             pg.on("pageerror", lambda e: problems.append(f"[{vw}x{vh}] page error: {e}"))
             pg.on("console", lambda m: problems.append(f"[{vw}x{vh}] console {m.type}: {m.text}") if m.type == "error" and "favicon" not in m.text else None)
-            await pg.goto("http://localhost:8765/index.html")
+            await pg.goto("http://localhost:8765/index.html" + ("?ps4" if ps4 else ""))
             await pg.wait_for_timeout(3600)
-            step = lambda n: print(f"  {vw}x{vh} · {n}")
+            step = lambda n: print(f"  {vw}x{vh}{' ps4' if ps4 else ''} · {n}")
             # wizard
             step("wizard"); await pg.click("#wizard >> text=Apply"); await pg.wait_for_timeout(300)
             await pg.click("#wizard >> text=Start"); await pg.wait_for_timeout(400)
@@ -93,37 +94,43 @@ async def main():
             await pg.click("#pane >> text=Back up now"); await pg.wait_for_timeout(400)
             if not await pg.locator("#pane >> text=Restore").count():
                 problems.append(f"[{vw}x{vh}] backup not listed")
-            # PS4 game without a PS4 engine: friendly prompt, download, then it starts
-            step("ps4 prompt")
-            await pg.click("#tab-library"); await pg.wait_for_timeout(300)
-            await pg.locator(".card", has_text="Tidebreaker").click(); await pg.wait_for_timeout(300)
-            await pg.click("#drawer >> text=Play"); await pg.wait_for_timeout(500)
-            if not await pg.locator(".dialog >> text=This is a PS4 game").count() and vw == 1366:
-                problems.append(f"[{vw}x{vh}] no PS4 engine prompt")
-            if await pg.locator(".dialog").count():
-                await pg.click(".dialog .btn.primary"); await pg.wait_for_timeout(2200)
-            if not await pg.locator("#running").is_visible():
-                problems.append(f"[{vw}x{vh}] PS4 game did not start after the download")
+            if not ps4:
+                step("no PS4 in this build")
+                await pg.click("#tab-library"); await pg.wait_for_timeout(300)
+                if await pg.locator("text=Install .pkg").count() or await pg.locator(".card", has_text="Tidebreaker").count():
+                    problems.append(f"[{vw}x{vh}] PS4 features visible while PS4 is off")
             else:
-                await pg.click("#running >> text=Stop"); await pg.wait_for_timeout(500)
-            # 0.11: install a PS4 .pkg found in the library folders, then update/DLC/mods page
-            step("pkg install")
-            await pg.click("#tab-library"); await pg.wait_for_timeout(300)
-            if await pg.locator("#pkgbar >> text=Install").count():
-                await pg.click("#pkgbar .btn"); await pg.wait_for_timeout(400)
-                await pg.click(".dialog .btn.primary"); await pg.wait_for_timeout(1800)
-                if await pg.locator("#pkgbar").count():
-                    problems.append(f"[{vw}x{vh}] pkg banner still shown after install")
-            step("extras")
-            await pg.locator(".card", has_text="Tidebreaker").click(); await pg.wait_for_timeout(300)
-            await pg.click("#drawer >> text=Game settings"); await pg.wait_for_timeout(300)
-            await pg.click('.sections button >> text="Update, DLC & mods"'); await pg.wait_for_timeout(500)
-            await pg.locator("#pane .switch").first.click(); await pg.wait_for_timeout(400)
-            if not await pg.locator("#pane .switch.on").count():
-                problems.append(f"[{vw}x{vh}] mods switch did not turn on")
-            await pg.click("#pane >> text=Choose file"); await pg.wait_for_timeout(300)
-            if not await pg.locator("#pane >> text=60fps.xml").count():
-                problems.append(f"[{vw}x{vh}] patch file not shown")
+                # PS4 game without a PS4 engine: friendly prompt, download, then it starts
+                step("ps4 prompt")
+                await pg.click("#tab-library"); await pg.wait_for_timeout(300)
+                await pg.locator(".card", has_text="Tidebreaker").click(); await pg.wait_for_timeout(300)
+                await pg.click("#drawer >> text=Play"); await pg.wait_for_timeout(500)
+                if not await pg.locator(".dialog >> text=This is a PS4 game").count() and vw == 1366:
+                    problems.append(f"[{vw}x{vh}] no PS4 engine prompt")
+                if await pg.locator(".dialog").count():
+                    await pg.click(".dialog .btn.primary"); await pg.wait_for_timeout(2200)
+                if not await pg.locator("#running").is_visible():
+                    problems.append(f"[{vw}x{vh}] PS4 game did not start after the download")
+                else:
+                    await pg.click("#running >> text=Stop"); await pg.wait_for_timeout(500)
+                # 0.11: install a PS4 .pkg found in the library folders, then update/DLC/mods page
+                step("pkg install")
+                await pg.click("#tab-library"); await pg.wait_for_timeout(300)
+                if await pg.locator("#pkgbar >> text=Install").count():
+                    await pg.click("#pkgbar .btn"); await pg.wait_for_timeout(400)
+                    await pg.click(".dialog .btn.primary"); await pg.wait_for_timeout(1800)
+                    if await pg.locator("#pkgbar").count():
+                        problems.append(f"[{vw}x{vh}] pkg banner still shown after install")
+                step("extras")
+                await pg.locator(".card", has_text="Tidebreaker").click(); await pg.wait_for_timeout(300)
+                await pg.click("#drawer >> text=Game settings"); await pg.wait_for_timeout(300)
+                await pg.click('.sections button >> text="Update, DLC & mods"'); await pg.wait_for_timeout(500)
+                await pg.locator("#pane .switch").first.click(); await pg.wait_for_timeout(400)
+                if not await pg.locator("#pane .switch.on").count():
+                    problems.append(f"[{vw}x{vh}] mods switch did not turn on")
+                await pg.click("#pane >> text=Choose file"); await pg.wait_for_timeout(300)
+                if not await pg.locator("#pane >> text=60fps.xml").count():
+                    problems.append(f"[{vw}x{vh}] patch file not shown")
             await pg.screenshot(path=f"/tmp/smoke_{vw}.png")
             await pg.close()
         await b.close()

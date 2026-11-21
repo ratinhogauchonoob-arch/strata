@@ -83,7 +83,7 @@ export const SECTIONS = [
     ],
   },
   { id: "library", group: "Launcher", title: "Library", custom: "library", perGame: false, lead: "Folders Strata watches for games. Each game is a folder with eboot.bin inside, or a .zar archive." },
-  { id: "engine", group: "Launcher", title: "Engines", custom: "engine", perGame: true, lead: "Strata runs games through open-source engines (all GPL-2.0), downloaded from their official GitHub releases. PS5 and PS4 games pick the right engine by themselves." },
+  { id: "engine", group: "Launcher", title: "Engines", custom: "engine", perGame: true, lead: "Strata runs games through open-source engines (all GPL-2.0), downloaded from their official GitHub releases. If one engine cannot run a game, Strata tries the next." },
   { id: "backups", group: "Launcher", title: "Saves & backups", custom: "backups", perGame: true, lead: "Copies game saves (and, if you want, shader caches) into one file you can put back later." },
   {
     id: "appearance", group: "Launcher", title: "Appearance", custom: "appearance", perGame: false,
@@ -112,7 +112,7 @@ export const SECTIONS = [
       { key: "emu.renderdoc", type: "toggle", label: "RenderDoc capture", tag: "debug", help: "Allows frame captures with RenderDoc." },
     ],
   },
-  { id: "extras", group: "Launcher", title: "Update, DLC & mods", custom: "extras", perGame: "only", lead: "Extra content installed next to this game." },
+  { id: "extras", group: "Launcher", title: "Update, DLC & mods", custom: "extras", perGame: "only", ps4Only: true, lead: "Extra content installed next to this game." },
   { id: "gamedev", group: "Launcher", title: "Developer", custom: "gamedev", perGame: "only", devOnly: true, lead: "Logs and details for this game." },
   { id: "about", group: "Launcher", title: "About", custom: "about", perGame: false, lead: "" },
 ];

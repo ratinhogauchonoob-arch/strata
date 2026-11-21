@@ -38,7 +38,7 @@ body:
     id: version
     attributes:
       label: Strata version
-      placeholder: 0.11.0 Beta
+      placeholder: 0.10.0 Beta
   - type: input
     id: game
     attributes:

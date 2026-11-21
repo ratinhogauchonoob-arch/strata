@@ -87,6 +87,8 @@ const mEngines = {
 const MACTIONS = [["cross","Cross"],["circle","Circle"],["square","Square"],["triangle","Triangle"],["l1","L1"],["r1","R1"],["l2","L2"],["r2","R2"],["l3","L3"],["r3","R3"],["options","Options"],["touchpad","Touchpad"],["up","D-pad up"],["down","D-pad down"],["left","D-pad left"],["right","D-pad right"],["ls_up","Left stick up"],["ls_down","Left stick down"],["ls_left","Left stick left"],["ls_right","Left stick right"],["rs_up","Right stick up"],["rs_down","Right stick down"],["rs_left","Right stick left"],["rs_right","Right stick right"]];
 const MKEYS = { cross: "space", circle: "c", square: "f", triangle: "r", l1: "q", r1: "e", l2: "mouse_right", r2: "mouse_left", l3: "lshift", r3: "v", options: "enter", touchpad: "tab", up: "up", down: "down", left: "left", right: "right", ls_up: "w", ls_down: "s", ls_left: "a", ls_right: "d", rs_up: "i", rs_down: "k", rs_left: "j", rs_right: "l" };
 const mBackups = [];
+// Preview with PS4 on: open index.html?ps4
+const MPS4 = typeof location !== "undefined" && location.search.includes("ps4");
 const mPkgs = ["D:/Games/Tidebreaker-CUSA00620.pkg"];
 const mMods = { on: false, off: false, update: "D:/Games/Tidebreaker-UPDATE" };
 
@@ -137,7 +139,7 @@ async function mock(cmd, a) {
   }
   switch (cmd) {
     case "bootstrap":
-      return { app: "Strata", version: "0.9.0", channel: "beta", platform: "web", data_dir: "C:/Strata/data", games_dir: "C:/Strata/data/Games", settings: structuredClone(mset), engine: "C:/Strata/data/engine/KytyPS5-Windows-x64/kyty_emulator.exe", running: mrun };
+      return { app: "Strata", version: "0.10.0", channel: "beta", ps4: MPS4, platform: "web", data_dir: "C:/Strata/data", games_dir: "C:/Strata/data/Games", settings: structuredClone(mset), engine: "C:/Strata/data/engine/KytyPS5-Windows-x64/kyty_emulator.exe", running: mrun };
     case "save_settings": mset = structuredClone(a.settings); mlog("debug", "settings", "saved"); return structuredClone(mset);
     case "system_info": return demoSys;
     case "auto_profile": return demoProfile;
@@ -145,7 +147,7 @@ async function mock(cmd, a) {
       Object.assign(mset.emu, { resolution: "1920x1080", gpu_index: 1, amd_cpu_compat: true });
       mset.perf.ram_limit_gb = 12; mset.auto_profile = "high"; mset.first_run = false;
       mlog("info", "profile", "Applied High · 1080p"); return structuredClone(mset);
-    case "scan_games": mlog("info", "library", `${demoGames.length} game(s) found in 41 ms`); return demoGames;
+    case "scan_games": { const list = demoGames.filter((g) => MPS4 || g.platform !== "ps4"); mlog("info", "library", `${list.length} game(s) found in 41 ms`); return list; }
     case "game_size": return 23456;
     case "pick_folder": return "E:/PS5Games";
     case "pick_file": return "C:/Engine/kyty_emulator.exe";
@@ -188,7 +190,7 @@ async function mock(cmd, a) {
       mEngines[id].path = `C:/Strata/data/engines/${id}/bin/${id}-release/${id}.exe`;
       return mEngines[id].path;
     }
-    case "engines_status": return Object.entries(mEngines).map(([id, e]) => ({ id, ...e, release: e.path ? e.path.split("/").slice(-2, -1)[0] : null, controls: id === "shadps4" || id === "anyps5" }));
+    case "engines_status": return Object.entries(mEngines).filter(([id]) => MPS4 || id !== "shadps4").map(([id, e]) => ({ id, ...e, release: e.path ? e.path.split("/").slice(-2, -1)[0] : null, controls: id === "shadps4" || id === "anyps5" }));
     case "next_engine": {
       if (!mrun || mrun.attempt >= mrun.attempts) throw "This was the last engine for this game.";
       emit("engine-fallback", { game_id: mrun.game_id, message: `${mrun.engine_name} skipped — trying the next engine…` });
@@ -207,7 +209,7 @@ async function mock(cmd, a) {
       return b.file;
     }
     case "backup_restore": return 14;
-    case "found_pkgs": return mPkgs;
+    case "found_pkgs": return MPS4 ? mPkgs : [];
     case "pkg_target_folder": return mset.pkg_install_folder || "D:/Games";
     case "pick_pkg": return "E:/PS4/Tidebreaker-CUSA00620.pkg";
     case "pick_patch": return "C:/Strata/patches/60fps.xml";

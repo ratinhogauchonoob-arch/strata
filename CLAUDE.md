@@ -21,3 +21,6 @@
 - Destinations follow shadPS4: game → <library>/<TITLEID>, update → <game>-UPDATE, DLC → data/engines/shadps4/user/addcont/<TITLEID>/<label>. Extract to <dest>.part then rename.
 - games::is_companion_dir skips -UPDATE/-patch/-mods/-mods.off/.part folders; scan_full also returns loose .pkg files.
 - Mods = shadPS4's <game>-mods overlay (off = renamed to -mods.off). Patch file → shadPS4 --patch.
+
+## Release switch
+- lib.rs PS4_ENABLED = false for 0.10.0 (PS5 only). Full PS4 tree saved as Strata-0.11-ps4.zip. UI reads bootstrap.ps4; mock: index.html?ps4.
