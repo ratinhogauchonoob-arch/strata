@@ -210,6 +210,8 @@ pub struct PlanInput<'a> {
     pub dev: &'a DevSettings,
     pub data: &'a Path,
     pub controls_file: Option<PathBuf>,
+    /// shadPS4: patch XML chosen for this game.
+    pub patch_file: &'a str,
 }
 
 pub fn plan(def: &EngineDef, i: PlanInput) -> Plan {
@@ -235,6 +237,10 @@ pub fn plan(def: &EngineDef, i: PlanInput) -> Plan {
             // shadPS4 keeps its data in "<working folder>/user", so run it from the engine root:
             // updating the release (bin/) then never touches saves or controls.
             let mut args = vec!["--fullscreen".to_string(), i.emu.fullscreen.to_string()];
+            if !i.patch_file.is_empty() && Path::new(i.patch_file).is_file() {
+                args.push("--patch".into());
+                args.push(i.patch_file.to_string());
+            }
             args.push("-g".into());
             args.push(eboot(i.game));
             Plan { program: i.exe.to_path_buf(), args, cwd: root, env: vec![], convert: None }
@@ -382,23 +388,23 @@ mod tests {
         let e = EmuSettings { fullscreen: true, ..Default::default() };
         let dev = DevSettings::default();
         let g = game("ps4", false);
-        let p = plan(def("shadps4").unwrap(), PlanInput { exe: Path::new("/d/engines/shadps4/bin/shadPS4"), game: &g, emu: &e, dev: &dev, data, controls_file: None });
+        let p = plan(def("shadps4").unwrap(), PlanInput { exe: Path::new("/d/engines/shadps4/bin/shadPS4"), game: &g, emu: &e, dev: &dev, data, controls_file: None, patch_file: "" });
         assert_eq!(p.args, ["--fullscreen", "true", "-g", &eboot(&g)]);
         assert_eq!(p.cwd, Path::new("/d/engines/shadps4"));
 
         let g5 = game("ps5", false);
-        let p = plan(def("sharpemu").unwrap(), PlanInput { exe: Path::new("/x/SharpEmu"), game: &g5, emu: &e, dev: &dev, data, controls_file: None });
+        let p = plan(def("sharpemu").unwrap(), PlanInput { exe: Path::new("/x/SharpEmu"), game: &g5, emu: &e, dev: &dev, data, controls_file: None, patch_file: "" });
         assert_eq!(p.args, [eboot(&g5)]);
         assert!(p.env.iter().any(|(k, v)| k == "SHARPEMU_USER_DIR" && v.ends_with("user")));
 
-        let p = plan(def("anyps5").unwrap(), PlanInput { exe: Path::new("/x/relinker"), game: &g5, emu: &e, dev: &dev, data, controls_file: Some("/c.ini".into()) });
+        let p = plan(def("anyps5").unwrap(), PlanInput { exe: Path::new("/x/relinker"), game: &g5, emu: &e, dev: &dev, data, controls_file: Some("/c.ini".into()), patch_file: "" });
         let conv = p.convert.unwrap();
         assert_eq!(conv[conv.len() - 2], eboot(&g5));
         assert_eq!(PathBuf::from(&conv[conv.len() - 1]), p.program);
         assert!(p.program.to_string_lossy().contains("PPSA00001"));
         assert!(p.env.iter().any(|(k, _)| k == "ANYPS5_INPUT_CONFIG"));
 
-        let p = plan(def("kyty").unwrap(), PlanInput { exe: Path::new("/x/kyty_emulator"), game: &g5, emu: &e, dev: &dev, data, controls_file: None });
+        let p = plan(def("kyty").unwrap(), PlanInput { exe: Path::new("/x/kyty_emulator"), game: &g5, emu: &e, dev: &dev, data, controls_file: None, patch_file: "" });
         assert_eq!(p.args.last().unwrap(), &eboot(&g5));
         assert!(p.args.contains(&"--fullscreen".to_string()));
     }

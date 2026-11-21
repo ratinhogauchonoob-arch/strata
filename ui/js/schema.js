@@ -25,7 +25,7 @@ export const SECTIONS = [
       { key: "emu.hdr", type: "toggle", label: "HDR output", help: "Only for HDR monitors with HDR enabled in Windows." },
       { key: "emu.hide_cursor", type: "toggle", label: "Hide mouse cursor", help: "Hides the cursor after 2 seconds without movement." },
       { key: "emu.vblank_frequency", type: "refresh", label: "Virtual refresh rate", tag: "risk", help: "Auto matches the monitor Strata is on (144 Hz, 280 Hz…). If a game runs too fast, set this game to 60 Hz." },
-      { key: "emu.perf_overlay", type: "toggle", label: "Performance overlay", help: "FPS, frame time and memory in the game window. F2 toggles it." },
+      { key: "emu.perf_overlay", type: "toggle", label: "Performance overlay", help: "KytyPS5: FPS, frame time and memory (F2 toggles it). In shadPS4 and AnyPS5 press F10 while playing." },
     ],
   },
   {
@@ -112,6 +112,7 @@ export const SECTIONS = [
       { key: "emu.renderdoc", type: "toggle", label: "RenderDoc capture", tag: "debug", help: "Allows frame captures with RenderDoc." },
     ],
   },
+  { id: "extras", group: "Launcher", title: "Update, DLC & mods", custom: "extras", perGame: "only", lead: "Extra content installed next to this game." },
   { id: "gamedev", group: "Launcher", title: "Developer", custom: "gamedev", perGame: "only", devOnly: true, lead: "Logs and details for this game." },
   { id: "about", group: "Launcher", title: "About", custom: "about", perGame: false, lead: "" },
 ];

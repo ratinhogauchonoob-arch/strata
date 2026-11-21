@@ -87,6 +87,8 @@ const mEngines = {
 const MACTIONS = [["cross","Cross"],["circle","Circle"],["square","Square"],["triangle","Triangle"],["l1","L1"],["r1","R1"],["l2","L2"],["r2","R2"],["l3","L3"],["r3","R3"],["options","Options"],["touchpad","Touchpad"],["up","D-pad up"],["down","D-pad down"],["left","D-pad left"],["right","D-pad right"],["ls_up","Left stick up"],["ls_down","Left stick down"],["ls_left","Left stick left"],["ls_right","Left stick right"],["rs_up","Right stick up"],["rs_down","Right stick down"],["rs_left","Right stick left"],["rs_right","Right stick right"]];
 const MKEYS = { cross: "space", circle: "c", square: "f", triangle: "r", l1: "q", r1: "e", l2: "mouse_right", r2: "mouse_left", l3: "lshift", r3: "v", options: "enter", touchpad: "tab", up: "up", down: "down", left: "left", right: "right", ls_up: "w", ls_down: "s", ls_left: "a", ls_right: "d", rs_up: "i", rs_down: "k", rs_left: "j", rs_right: "l" };
 const mBackups = [];
+const mPkgs = ["D:/Games/Tidebreaker-CUSA00620.pkg"];
+const mMods = { on: false, off: false, update: "D:/Games/Tidebreaker-UPDATE" };
 
 let mset = null;
 function defaults() {
@@ -204,6 +206,18 @@ async function mock(cmd, a) {
       return b.file;
     }
     case "backup_restore": return 14;
+    case "found_pkgs": return mPkgs;
+    case "pick_pkg": return "E:/PS4/Tidebreaker-CUSA00620.pkg";
+    case "pick_patch": return "C:/Strata/patches/60fps.xml";
+    case "pkg_inspect": return { info: { path: a.path, content_id: "UP0000-DEMO00620_00-TIDEBREAKER00000", title_id: "DEMO00620", label: "TIDEBREAKER00000", kind: "game", kind_name: "Game", size_mb: 8123 }, destination: "C:/Strata/data/Games/DEMO00620", exists: false, game_found: false };
+    case "pkg_install": {
+      for (let i = 1; i <= 8; i++) setTimeout(() => emit("pkg-progress", { file: "Tidebreaker-CUSA00620.pkg", stage: "extracting", files_done: i * 120, files_total: 960, bytes_done: i * 1e9, bytes_total: 8e9, message: "" }), i * 120);
+      await new Promise((r) => setTimeout(r, 1100));
+      mPkgs.length = 0;
+      return "C:/Strata/data/Games/DEMO00620";
+    }
+    case "game_extras": return { update: mMods.update, update_version: "01.05", mods: mMods.on || mMods.off ? "D:/Games/X-mods" : null, mods_enabled: mMods.on, mods_files: 3, dlc: ["SOUNDTRACK"] };
+    case "set_mods": mMods.on = a.enabled; mMods.off = !a.enabled; return "D:/Games/X-mods";
     case "export_diagnostics": return "C:/Strata/data/logs/diagnostics-20261120.txt";
     case "paths": return { data: "C:/Strata/data", logs: "C:/Strata/data/logs", games: "C:/Strata/data/Games", engine: "C:/Strata/data/engine", engines: "C:/Strata/data/engines", backups: "C:/Strata/data/backups" };
   }

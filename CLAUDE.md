@@ -15,3 +15,9 @@
 - shadPS4 runs with cwd = data/engines/shadps4 (its user dir = cwd/user). SharpEmu gets SHARPEMU_USER_DIR. AnyPS5 converts once into data/engines/anyps5/apps/<TITLEID>/.
 - Games need eboot.bin + sce_sys/param.json (PS5) or param.sfo (PS4).
 - vblank_frequency 0 = Auto (monitor of Strata's window via EnumDisplaySettingsW).
+
+## 0.11 PS4 packages
+- pkginstall.rs uses orbis-pkg-util (MIT/Apache, choose MIT). Only fake PKGs open; retail → friendly error from OpenError.
+- Destinations follow shadPS4: game → <library>/<TITLEID>, update → <game>-UPDATE, DLC → data/engines/shadps4/user/addcont/<TITLEID>/<label>. Extract to <dest>.part then rename.
+- games::is_companion_dir skips -UPDATE/-patch/-mods/-mods.off/.part folders; scan_full also returns loose .pkg files.
+- Mods = shadPS4's <game>-mods overlay (off = renamed to -mods.off). Patch file → shadPS4 --patch.

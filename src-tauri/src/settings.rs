@@ -242,6 +242,8 @@ pub struct GameEntry {
     /// Engine that last ran this game past the failure window.
     pub good_engine: String,
     pub controls: Option<ControlSettings>,
+    /// shadPS4 patch file (XML) for this game ("" = none).
+    pub patch_file: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.10.0%20beta-ff7a2f">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.11.0%20beta-ff7a2f">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-5163f5">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--2.0-2fcb72">
   <img alt="Built with" src="https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-a6abb4">
@@ -41,6 +41,8 @@
 | **Per-game settings** | Give one game its own display, rendering, performance, controller keys and engine; changed options are marked with a dot, and one button goes back to the global settings. |
 | **Refresh rate that follows your monitor** | *Auto* reads the monitor Strata is on — 144 Hz, 280 Hz, anything — and passes it to the engine. |
 | **Keyboard and mouse keys** | One key map written in each engine's own format (shadPS4 and AnyPS5), per game if you want. |
+| **PS4 .pkg install** | Pick a `.pkg` you dumped from your own console — game, update or DLC — and Strata unpacks it where shadPS4 expects it (`<game>-UPDATE`, `addcont/<ID>`). Loose `.pkg` files in your folders are offered for install. Store packages are encrypted and refused. |
+| **Mods and patches (PS4)** | A per-game mods folder you can switch on and off, and a patch file (XML) passed to shadPS4. |
 | **Save backups** | Back up the saves of one game or of all of them (shader caches optional) into a single zip and put them back later. |
 | **Developer mode** | Live engine logs with filters, a twelve-point self-test, the exact engine command line and a one-click diagnostics report. |
 | **Small and quiet** | Tauri + Rust on top of the WebView2 already in Windows: a ~10 MB app that sits idle while you play. |
@@ -104,7 +106,7 @@ The app is a Tauri 2 project: Rust backend in `src-tauri/`, plain HTML/CSS/JS fr
 
 ```bash
 # requirements: Rust (stable), Node 18+, and on Windows the MSVC build tools + WebView2
-cd src-tauri && cargo test --lib       # 39 unit tests
+cd src-tauri && cargo test --lib       # 44 unit tests
 cd .. && npx @tauri-apps/cli@^2 build  # app + NSIS installer in src-tauri/target/release
 ```
 
@@ -120,6 +122,7 @@ src-tauri/src/
   engine.rs     KytyPS5 command line, starting/watching an engine, exit codes
   controls.rs   one key map → shadPS4 / AnyPS5 control files
   backups.rs    save + shader backups (zip with a manifest)
+  pkginstall.rs PS4 fake-PKG install (game / update / DLC), mods folder, installed extras
   display.rs    monitor refresh rate for "Auto"
   gpu.rs        Vulkan device list (same order as the engine's --gpu index)
   profile.rs    automatic tiers per GPU family / VRAM
@@ -140,6 +143,7 @@ Use the **[report form on the website](https://strata.gbxstudios.com/report)** o
 ## Credits & license
 
 - **[KytyPS5](https://github.com/KytyPS5/KytyPS5)** (GPL-2.0, based on [Kyty](https://github.com/InoriRus/Kyty)), **[SharpEmu](https://github.com/sharpemu/sharpemu)** (GPL-2.0), **[AnyPS5](https://github.com/boykopovar/AnyPS5)** (GPL-2.0) and **[shadPS4](https://github.com/shadps4-emu/shadPS4)** (GPL-2.0) — the engines that run the games. Strata downloads them from their own releases and does not change them.
+- **[orbis-pkg / orbis-pkg-util](https://github.com/videobitva/orbis)** (MIT OR Apache-2.0, used under MIT) — PS4 package reading and extraction.
 - **[Tauri](https://tauri.app)**, **[ash](https://github.com/ash-rs/ash)**, **sysinfo**, **ureq**, **zip** and the Rust ecosystem.
 - Fonts: **Archivo** and **IBM Plex Mono** (SIL Open Font License 1.1, see `ui/fonts`).
 

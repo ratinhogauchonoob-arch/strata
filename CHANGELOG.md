@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0 Beta — 2026-11-21
+- **Install PS4 .pkg files** (games, updates, DLC) dumped from your own console. Strata reads the package, shows what it is and where it goes, and unpacks it with progress: games into your games folder, updates into `<game>-UPDATE`, DLC into shadPS4's `addcont`. Store/retail packages are refused with a clear message.
+- Loose `.pkg` files in your library folders show up in Library with an Install button.
+- New per-game page **Update, DLC & mods** (PS4): installed update and its version, DLC list, a mods folder you can switch on/off, and a patch file (XML) for shadPS4.
+- Update, mods and unfinished install folders no longer appear as separate games.
+- PS4 tag on library cards; the performance overlay setting explains the F10 key for shadPS4 and AnyPS5.
+
 ## 0.10.0 Beta — 2026-11-21
 - **Four engines.** PS5: KytyPS5, SharpEmu, AnyPS5. PS4: shadPS4. Each one downloads from its own GitHub releases.
 - **PS4 games** are recognized by their `param.sfo` and start with the PS4 engine automatically. If it is missing, Strata offers the download.

@@ -1,6 +1,6 @@
 [package]
 name = "strata"
-version = "0.10.0"
+version = "0.11.0"
 description = "Strata - game launcher frontend"
 edition = "2021"
 license = "GPL-2.0-only"
@@ -21,6 +21,9 @@ ash = { version = "0.38", default-features = false, features = ["loaded", "debug
 sysinfo = { version = "0.37", default-features = false, features = ["system", "disk"] }
 ureq = { version = "2", features = ["native-certs"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+orbis-pkg-util = { version = "0.1", default-features = false }
+orbis-pkg = "0.1"
+memmap2 = "0.9"
 base64 = "0.22"
 time = { version = "0.3", features = ["local-offset", "formatting", "macros"] }
 

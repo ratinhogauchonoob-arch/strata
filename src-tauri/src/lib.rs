@@ -10,6 +10,7 @@ pub mod games;
 pub mod gpu;
 pub mod logs;
 pub mod memcap;
+pub mod pkginstall;
 pub mod profile;
 pub mod selftest;
 pub mod settings;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub sys: Mutex<Option<gpu::SystemInfo>>,
     pub games: Mutex<Vec<games::Game>>,
     pub skipped: Mutex<Vec<games::Skipped>>,
+    pub pkgs: Mutex<Vec<String>>,
 }
 
 impl AppState {
@@ -145,7 +147,11 @@ async fn apply_auto_profile(state: State<'_, AppState>) -> Result<Settings, Stri
 async fn scan_games(state: State<'_, AppState>) -> Result<Vec<games::Game>, String> {
     let folders = state.settings.lock().unwrap().library_folders.clone();
     let t = std::time::Instant::now();
-    let (list, skipped) = tauri::async_runtime::spawn_blocking(move || games::scan_report(&folders, false)).await.map_err(|e| e.to_string())?;
+    let (list, skipped, pkgs) = tauri::async_runtime::spawn_blocking(move || games::scan_full(&folders, false)).await.map_err(|e| e.to_string())?;
+    if !pkgs.is_empty() {
+        logs::info("library", &format!("{} .pkg file(s) waiting to be installed", pkgs.len()));
+    }
+    *state.pkgs.lock().unwrap() = pkgs;
     logs::info("library", &format!("{} game(s) found in {} ms", list.len(), t.elapsed().as_millis()));
     for sk in &skipped {
         logs::debug("library", &format!("Skipped {}: {}", sk.path, sk.reason));
@@ -153,6 +159,97 @@ async fn scan_games(state: State<'_, AppState>) -> Result<Vec<games::Game>, Stri
     *state.games.lock().unwrap() = list.clone();
     *state.skipped.lock().unwrap() = skipped;
     Ok(list)
+}
+
+#[tauri::command]
+fn found_pkgs(state: State<AppState>) -> Vec<String> {
+    state.pkgs.lock().unwrap().clone()
+}
+
+fn shadps4_user(state: &AppState) -> PathBuf {
+    engines::root_dir(&state.data, "shadps4").join("user")
+}
+
+#[tauri::command]
+async fn pick_pkg(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog().file().add_filter("PS4 package", &["pkg"]).blocking_pick_file().map(|p| p.to_string())
+}
+
+#[tauri::command]
+async fn pick_patch(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog().file().add_filter("Patch file", &["xml"]).blocking_pick_file().map(|p| p.to_string())
+}
+
+#[derive(Serialize)]
+struct PkgPlan {
+    info: pkginstall::PkgInfo,
+    destination: String,
+    exists: bool,
+    game_found: bool,
+}
+
+/// Reads a package and says where it would go (nothing is written).
+#[tauri::command]
+async fn pkg_inspect(state: State<'_, AppState>, path: String, folder: Option<String>) -> Result<PkgPlan, String> {
+    let p = path.clone();
+    let info = tauri::async_runtime::spawn_blocking(move || pkginstall::inspect(std::path::Path::new(&p))).await.map_err(|e| e.to_string())??;
+    let library = folder.map(PathBuf::from).unwrap_or_else(|| {
+        let s = state.settings.lock().unwrap();
+        s.library_folders.first().map(PathBuf::from).unwrap_or_else(|| state.default_games_dir())
+    });
+    let game = state.games.lock().unwrap().iter().find(|g| g.title_id == info.title_id && g.platform == "ps4" && !g.archive).map(|g| PathBuf::from(&g.path));
+    let dest = pkginstall::destination(&info, &library, game.as_deref(), &shadps4_user(&state));
+    Ok(PkgPlan { exists: dest.exists(), destination: dest.to_string_lossy().into_owned(), game_found: game.is_some(), info })
+}
+
+#[tauri::command]
+async fn pkg_install(app: AppHandle, state: State<'_, AppState>, path: String, folder: Option<String>, overwrite: bool) -> Result<String, String> {
+    let plan = pkg_inspect(state.clone(), path.clone(), folder).await?;
+    let dest = PathBuf::from(&plan.destination);
+    logs::info("pkg", &format!("Installing {} ({} {}) to {}", path, plan.info.kind_name, plan.info.title_id, dest.display()));
+    let app2 = app.clone();
+    let src = PathBuf::from(&path);
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        pkginstall::install(&src, &dest, overwrite, &|p| {
+            let _ = app2.emit("pkg-progress", &p);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    match res {
+        Ok(d) => {
+            logs::info("pkg", &format!("Installed to {}", d.display()));
+            let _ = app.emit("pkg-progress", pkginstall::Progress { file: name, stage: "done".into(), files_done: 0, files_total: 0, bytes_done: 0, bytes_total: 0, message: d.to_string_lossy().into_owned() });
+            Ok(d.to_string_lossy().into_owned())
+        }
+        Err(e) => {
+            if !e.starts_with("already-installed:") {
+                logs::error("pkg", &e);
+                let _ = app.emit("pkg-progress", pkginstall::Progress { file: name, stage: "error".into(), files_done: 0, files_total: 0, bytes_done: 0, bytes_total: 0, message: e.clone() });
+            }
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+fn game_extras(state: State<AppState>, id: String) -> Result<pkginstall::Extras, String> {
+    let g = state.games.lock().unwrap().iter().find(|g| g.id == id).cloned().ok_or("Game not found.")?;
+    if g.archive {
+        return Ok(pkginstall::Extras::default());
+    }
+    Ok(pkginstall::extras(std::path::Path::new(&g.path), &g.title_id, &shadps4_user(&state)))
+}
+
+#[tauri::command]
+fn set_mods(state: State<AppState>, id: String, enabled: bool) -> Result<String, String> {
+    let g = state.games.lock().unwrap().iter().find(|g| g.id == id).cloned().ok_or("Game not found.")?;
+    let p = pkginstall::set_mods(std::path::Path::new(&g.path), enabled)?;
+    logs::info("mods", &format!("Mods for {} {}", g.title, if enabled { "on" } else { "off" }));
+    Ok(p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -228,6 +325,7 @@ struct Attempt {
     controls: settings::ControlSettings,
     fail_seconds: u32,
     failures: Vec<String>,
+    patch_file: String,
 }
 
 fn engine_name(id: &str) -> &'static str {
@@ -286,6 +384,7 @@ async fn launch_game(app: AppHandle, state: State<'_, AppState>, id: String) -> 
             controls: s.controls_for(&id),
             fail_seconds: s.engines.fail_seconds,
             failures: vec![],
+            patch_file: entry.patch_file.clone(),
         }
     };
     let mut attempt = attempt;
@@ -348,7 +447,7 @@ fn start_attempt(app: AppHandle, mut a: Attempt) -> Result<engine::RunningInfo, 
                 None
             }
         };
-        let plan = engines::plan(def, engines::PlanInput { exe: &exe, game: &a.game, emu: &a.emu, dev: &a.dev, data: &state.data, controls_file });
+        let plan = engines::plan(def, engines::PlanInput { exe: &exe, game: &a.game, emu: &a.emu, dev: &a.dev, data: &state.data, controls_file, patch_file: &a.patch_file });
         if let Some(conv) = &plan.convert {
             let _ = app.emit("engine-status", EngineEvent { game_id: a.game.id.clone(), message: format!("Preparing {} for {} (first launch only)…", a.game.title, def.name) });
             if let Err(e) = engine::convert(&exe, conv, &plan.program, std::path::Path::new(&engines::eboot(&a.game))) {
@@ -725,6 +824,7 @@ pub fn run() {
             sys: Mutex::new(None),
             games: Mutex::new(Vec::new()),
             skipped: Mutex::new(Vec::new()),
+            pkgs: Mutex::new(Vec::new()),
         })
         .setup(move |app| {
             logs::init(&data, Some(app.handle().clone()), &settings.dev.log_level);
@@ -747,6 +847,13 @@ pub fn run() {
             running_game,
             monitor_refresh,
             skipped_folders,
+            found_pkgs,
+            pick_pkg,
+            pick_patch,
+            pkg_inspect,
+            pkg_install,
+            game_extras,
+            set_mods,
             engines_status,
             control_info,
             backup_create,

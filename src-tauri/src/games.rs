@@ -193,7 +193,21 @@ fn is_game_dir(dir: &Path) -> bool {
     sys.join("param.json").is_file() || sys.join("param.sfo").is_file()
 }
 
-fn scan_dir(dir: &Path, folder: &str, depth: usize, out: &mut Vec<Game>, skipped: &mut Vec<Skipped>, with_size: bool) {
+/// Folders that belong to a game but are not games: updates, mods, unfinished installs.
+pub fn is_companion_dir(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    ["-update", "-patch", "-mods", "-mods.off", ".part"].iter().any(|s| n.ends_with(s))
+}
+
+#[derive(Default)]
+struct Found {
+    games: Vec<Game>,
+    skipped: Vec<Skipped>,
+    pkgs: Vec<String>,
+}
+
+fn scan_dir(dir: &Path, folder: &str, depth: usize, found: &mut Found, with_size: bool) {
+    let (out, skipped) = (&mut found.games, &mut found.skipped);
     if depth > MAX_DEPTH {
         return;
     }
@@ -217,8 +231,14 @@ fn scan_dir(dir: &Path, folder: &str, depth: usize, out: &mut Vec<Game>, skipped
             continue;
         }
         if p.is_dir() {
-            scan_dir(&p, folder, depth + 1, out, skipped, with_size);
+            if is_companion_dir(&name) {
+                continue;
+            }
+            scan_dir(&p, folder, depth + 1, found, with_size);
+        } else if name.ends_with(".pkg") {
+            found.pkgs.push(p.to_string_lossy().into_owned());
         } else if name.ends_with(".zar") {
+            let out = &mut found.games;
             let size = p.metadata().map(|m| m.len() / (1024 * 1024)).unwrap_or(0);
             // Art for archives sits next to them: Game.zar + Game.png / Game.background.png / Game.logo.png
             let side = |suffix: &str| {
@@ -249,17 +269,25 @@ pub fn scan(folders: &[String], with_size: bool) -> Vec<Game> {
 }
 
 pub fn scan_report(folders: &[String], with_size: bool) -> (Vec<Game>, Vec<Skipped>) {
-    let mut out = Vec::new();
-    let mut skipped = Vec::new();
+    let r = scan_full(folders, with_size);
+    (r.0, r.1)
+}
+
+/// Games, folders left out, and loose .pkg files waiting to be installed.
+pub fn scan_full(folders: &[String], with_size: bool) -> (Vec<Game>, Vec<Skipped>, Vec<String>) {
+    let mut found = Found::default();
     for f in folders {
         let p = Path::new(f);
         if p.is_dir() {
-            scan_dir(p, f, 0, &mut out, &mut skipped, with_size);
+            scan_dir(p, f, 0, &mut found, with_size);
         }
     }
+    let mut out = found.games;
     out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
     out.dedup_by(|a, b| a.id == b.id);
-    (out, skipped)
+    found.pkgs.sort();
+    found.pkgs.dedup();
+    (out, found.skipped, found.pkgs)
 }
 
 #[cfg(test)]
@@ -302,6 +330,22 @@ mod tests {
         assert_eq!(list[1].platform, "ps5");
         assert!(list[1].icon.is_some());
         assert!(list[1].background.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn updates_mods_and_pkgs() {
+        let root = std::env::temp_dir().join(format!("strata_comp_{}", std::process::id()));
+        for d in ["CUSA00001", "CUSA00001-UPDATE", "CUSA00001-mods", "CUSA00002.part"] {
+            let g = root.join(d);
+            fs::create_dir_all(g.join("sce_sys")).unwrap();
+            fs::write(g.join("eboot.bin"), b"x").unwrap();
+            fs::write(g.join("sce_sys/param.sfo"), b"junk").unwrap();
+        }
+        fs::write(root.join("Game.pkg"), b"p").unwrap();
+        let (games, _, pkgs) = scan_full(&[root.to_string_lossy().into_owned()], false);
+        assert_eq!(games.len(), 1, "update/mods/unfinished folders are not separate games");
+        assert_eq!(pkgs.len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 

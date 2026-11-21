@@ -64,6 +64,9 @@ const S = {
   backups: null,
   skipped: [],
   monitorHz: null,
+  pkgs: [], // loose .pkg files found in the library folders
+  pkgJob: null, // install progress
+  extras: {}, // game id -> update/DLC/mods
   sizes: {},
 };
 const ENGINE_NAME = { kyty: "KytyPS5", sharpemu: "SharpEmu", anyps5: "AnyPS5", shadps4: "shadPS4" };
@@ -335,7 +338,9 @@ function renderLibrary() {
         search,
         seg("filter", [["all", "All"], ["fav", "Favorites"], ["recent", "Recent"], ["playable", "Playable"]]),
         seg("layout", [["grid", "Grid"], ["list", "List"]]),
+        h("button", { class: "btn small", "data-nav": true, onclick: () => installPkg() }, "Install .pkg"),
         h("button", { class: "btn small", "data-nav": true, onclick: refresh }, "Refresh"))),
+    pkgBanner(),
     h("div", { class: "scroll", id: "libbody" }));
   renderLibraryBody(list);
 }
@@ -357,7 +362,7 @@ function renderLibraryBody(list = filteredGames()) {
           g.icon ? h("img", { src: fileSrc(g.icon), alt: "", loading: "lazy" }) : h("div", { class: "ph" }, initials(g.title)),
           e.status && e.status !== "unknown" ? h("span", { class: "badge " + e.status }, STATUS[e.status]) : null),
         h("div", { class: "t" }, g.title),
-        h("div", { class: "s micro" }, g.archive ? "ZAR archive" : g.title_id || "—"));
+        h("div", { class: "s micro" }, g.archive ? "ZAR archive" : g.title_id || "—", g.platform === "ps4" ? h("span", { class: "plat ps4" }, "PS4") : null));
     })));
   } else {
     body.append(h("div", { class: "list" },
@@ -437,6 +442,52 @@ function closeDrawer() {
   return true;
 }
 
+// ───────────────────────── PS4 .pkg install ─────────────────────────
+function pkgBanner() {
+  const job = S.pkgJob;
+  if (job && job.stage === "extracting") {
+    const pct = job.bytes_total ? Math.min(100, Math.round((job.bytes_done / job.bytes_total) * 100)) : 0;
+    return h("div", { class: "banner accent pkgbar", id: "pkgbar" },
+      h("span", {}, `Installing ${job.file} · ${job.files_done}${job.files_total ? " / " + job.files_total : ""} files · ${pct}%`),
+      h("div", { class: "progress" }, h("div", { style: { width: pct + "%" } })));
+  }
+  if (!S.pkgs.length) return null;
+  return h("div", { class: "banner", id: "pkgbar" },
+    h("span", {}, S.pkgs.length === 1 ? `Found a .pkg in your folders: ${S.pkgs[0].split(/[\\/]/).pop()}` : `Found ${S.pkgs.length} .pkg files in your folders.`),
+    h("button", { class: "btn small", "data-nav": true, onclick: () => installPkg(S.pkgs[0]) }, S.pkgs.length === 1 ? "Install" : "Install the first"));
+}
+
+async function installPkg(path, overwrite = false) {
+  if (S.pkgJob && S.pkgJob.stage === "extracting") return toast("Another package is installing.", "warn");
+  if (!path) path = await invoke("pick_pkg");
+  if (!path) return;
+  let plan;
+  try { plan = await invoke("pkg_inspect", { path, folder: null }); } catch (e) { return toast(String(e), "err"); }
+  const i = plan.info;
+  const where = i.kind === "update" ? (plan.game_found ? "next to the installed game (as an update)" : "in your games folder (the game itself is not installed yet)")
+    : i.kind === "dlc" ? "in the PS4 engine's DLC folder" : "in your games folder";
+  if (!overwrite) {
+    const ok = await ask(`Install ${i.kind_name}: ${i.title_id}?`,
+      `${i.content_id} · ${fmtSize(i.size_mb)}. It goes ${where}:\n${plan.destination}${plan.exists ? "\n\nIt is already installed and will be replaced." : ""}`,
+      plan.exists ? "Replace" : "Install");
+    if (!ok) return;
+  }
+  S.pkgJob = { file: path.split(/[\\/]/).pop(), stage: "extracting", files_done: 0, files_total: 0, bytes_done: 0, bytes_total: 1 };
+  if (S.view === "library") renderLibrary();
+  try {
+    await invoke("pkg_install", { path, folder: null, overwrite: overwrite || plan.exists });
+    toast(`${i.kind_name} ${i.title_id} installed.`, "ok");
+    if (i.kind === "game" && !haveEngine("ps4") && !S.settings.engines.skip_ps4) {
+      if (await ask("Get the PS4 engine?", "PS4 games run with shadPS4. Download it now?", "Download")) downloadEngine("shadps4");
+    }
+  } catch (e) {
+    toast(String(e).replace(/^already-installed:/, "Already installed: "), "err");
+  }
+  S.pkgJob = null;
+  S.extras = {};
+  await refresh();
+}
+
 // ───────────────────────── settings ─────────────────────────
 function openGameSettings(id) {
   S.perGame = id;
@@ -493,7 +544,7 @@ function renderPaneInner() {
         : h("button", { class: "switch", "data-nav": true, onclick: () => { e.emu = structuredClone(S.settings.emu); e.perf = structuredClone(S.settings.perf); save(); renderPane(); } })));
   }
 
-  const custom = { profile: paneProfile, ram: paneRam, library: paneLibrary, engine: paneEngines, appearance: paneAppearance, about: paneAbout, controls: paneControls, backups: paneBackups, gamedev: paneGameDev }[sec.custom];
+  const custom = { profile: paneProfile, ram: paneRam, library: paneLibrary, engine: paneEngines, appearance: paneAppearance, about: paneAbout, controls: paneControls, backups: paneBackups, gamedev: paneGameDev, extras: paneExtras }[sec.custom];
   if (custom) custom(pane);
   if (sec.fields) {
     const target = activeEmu();
@@ -891,6 +942,33 @@ function paneBackups(pane) {
   add(pane, h("div", { style: { marginTop: "14px" } }, h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.backups }).catch(() => toast("No backups yet.", "warn")); } }, "Open backups folder")));
 }
 
+function paneExtras(pane) {
+  const g = S.games.find((x) => x.id === S.perGame);
+  if (g.platform !== "ps4") {
+    add(pane, h("div", { class: "banner" }, h("span", {}, "Updates, DLC, mods and patches are handled for PS4 games (shadPS4). PS5 engines read updates from the game folder itself.")));
+    return;
+  }
+  const x = S.extras[g.id];
+  if (!x) { invoke("game_extras", { id: g.id }).then((r) => { S.extras[g.id] = r; renderPane(); }).catch((e) => toast(String(e), "err")); add(pane, h("div", { class: "micro" }, "Checking…")); return; }
+  const e = entry(g.id);
+  const row = (name, help, ...ctl) => h("div", { class: "field" }, h("div", { class: "name" }, name), help ? h("div", { class: "help" }, help) : null, h("div", { class: "ctl" }, ...ctl));
+  const open = (p) => invoke("open_path", { path: p }).catch((err) => toast(String(err), "err"));
+  add(pane,
+    row("Update", x.update ? `Installed${x.update_version ? " · version " + x.update_version : ""}. shadPS4 loads it automatically.` : "No update installed. Install the update .pkg and Strata puts it in the right place.",
+      x.update ? h("button", { class: "btn small", "data-nav": true, onclick: () => open(x.update) }, "Open folder") : null,
+      h("button", { class: "btn small", "data-nav": true, onclick: () => installPkg() }, "Install .pkg")),
+    row("DLC", x.dlc.length ? `${x.dlc.length} installed: ${x.dlc.join(", ")}` : "No DLC installed.",
+      h("button", { class: "btn small", "data-nav": true, onclick: () => installPkg() }, "Install DLC .pkg")),
+    row("Mods", x.mods ? `${x.mods_files} file(s) in the mods folder. Files there replace the game's own files with the same path.` : "Put changed game files in the mods folder, keeping the game's folder structure. Turning mods off keeps the files.",
+      h("button", { class: "switch" + (x.mods_enabled ? " on" : ""), "data-nav": true, title: "Use mods", onclick: async () => {
+        try { await invoke("set_mods", { id: g.id, enabled: !x.mods_enabled }); delete S.extras[g.id]; renderPane(); } catch (err) { toast(String(err), "err"); }
+      } }),
+      x.mods ? h("button", { class: "btn small", "data-nav": true, onclick: () => open(x.mods) }, "Open folder") : null),
+    row("Patch file", e.patch_file ? e.patch_file : "Game patches (XML, e.g. 60 FPS or resolution fixes) loaded by shadPS4 for this game.",
+      h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("pick_patch"); if (p) { e.patch_file = p; save(); renderPane(); } } }, e.patch_file ? "Change" : "Choose file"),
+      e.patch_file ? h("button", { class: "btn small ghost", "data-nav": true, onclick: () => { e.patch_file = ""; save(); renderPane(); } }, "Remove") : null));
+}
+
 function paneGameDev(pane) {
   const g = S.games.find((x) => x.id === S.perGame);
   const e = entry(S.perGame);
@@ -1174,6 +1252,7 @@ function renderWizard(force = false) {
 async function refresh() {
   try {
     S.games = await invoke("scan_games");
+    S.pkgs = await invoke("found_pkgs").catch(() => []);
   } catch (e) { toast(String(e), "err"); }
   if (S.view === "home") renderHome();
   if (S.view === "library") renderLibrary();
@@ -1248,6 +1327,12 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
     if ($("#wizard").classList.contains("show")) renderWizard(true);
   });
   listen("engine-fallback", (x) => toast(x.message, "warn"));
+  listen("pkg-progress", (p) => {
+    if (p.stage !== "extracting" || !S.pkgJob) return;
+    S.pkgJob = p;
+    const bar = $("#pkgbar");
+    if (bar && S.view === "library") bar.replaceWith(pkgBanner());
+  });
   listen("engine-status", (x) => toast(x.message, ""));
   const [games] = await Promise.all([
     invoke("scan_games").catch(() => []),
@@ -1257,6 +1342,7 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
     invoke("logs_since", { seq: 0 }).then((ls) => ls.forEach(appendLog)).catch(() => null),
   ]);
   S.games = games;
+  S.pkgs = await invoke("found_pkgs").catch(() => []);
   S.profile = await invoke("auto_profile").catch(() => null);
   S.loaded = true;
   log("info", `UI ready · ${S.games.length} games · engines: ${S.engines.filter((e) => e.path).map((e) => e.name).join(", ") || "none"}`);
