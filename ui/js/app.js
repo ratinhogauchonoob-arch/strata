@@ -22,6 +22,8 @@ function h(tag, attrs = {}, ...kids) {
   return el;
 }
 const $ = (s, r = document) => r.querySelector(s);
+// Native append() would print "null" for optional pieces; skip them.
+const add = (el, ...kids) => el.append(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false));
 const ICON = {
   play: '<svg viewBox="0 0 14 14"><path d="M3 1.8v10.4c0 .5.6.8 1 .5l8.1-5.2c.4-.2.4-.8 0-1L4 1.3c-.4-.3-1 0-1 .5z"/></svg>',
   stop: '<svg viewBox="0 0 14 14"><rect x="2.5" y="2.5" width="9" height="9" rx="1.5"/></svg>',
@@ -56,8 +58,17 @@ const S = {
   devFilter: { info: true, warn: true, error: true, debug: true, source: "all", q: "", follow: true },
   checks: null,
   download: null,
+  downloads: {}, // engine id -> progress
+  engines: [],
+  controlInfo: null,
+  backups: null,
+  skipped: [],
+  monitorHz: null,
   sizes: {},
 };
+const ENGINE_NAME = { kyty: "KytyPS5", sharpemu: "SharpEmu", anyps5: "AnyPS5", shadps4: "shadPS4" };
+const PS5_SET = ["kyty", "sharpemu", "anyps5"];
+const haveEngine = (platform) => S.engines.some((e) => e.path && e.platforms.includes(platform));
 
 const VIEWS = ["home", "library", "settings", "dev"];
 const visibleViews = () => VIEWS.filter((v) => v !== "dev" || S.settings?.dev.enabled);
@@ -146,11 +157,11 @@ function renderTop() {
     h("span", { html: MARK() }), h("span", { class: "word", "data-tauri-drag-region": true }, "STRATA"),
     S.boot.channel ? h("span", { class: "beta" }, S.boot.channel) : null);
   const tabs = h("nav", { class: "tabs" }, visibleViews().map((v, i) =>
-    h("button", { class: "tab" + (S.view === v ? " active" : ""), "data-nav": true, id: "tab-" + v, onclick: () => go(v) },
+    h("button", { class: "tab" + (S.view === v ? " active" : ""), "data-nav": true, id: "tab-" + v, onclick: () => { if (v === "settings") S.perGame = null; go(v); } },
       { home: "Home", library: "Library", settings: "Settings", dev: "Developer" }[v])));
   const gpu = S.profile;
   const chip = h("button", {
-    class: "chip " + (!gpu ? "" : gpu.tier === "unsupported" ? "bad" : S.engine.path ? "ok" : "warn"),
+    class: "chip " + (!gpu ? "" : gpu.tier === "unsupported" ? "bad" : S.engines.some((e) => e.path) ? "ok" : "warn"),
     "data-nav": true,
     title: "Hardware profile",
     onclick: () => { S.section = "profile"; S.perGame = null; go("settings"); },
@@ -184,6 +195,7 @@ function renderHints() {
 
 function go(view) {
   if (!visibleViews().includes(view)) view = "home";
+  if (view !== "settings") S.perGame = null; // game settings close when you leave them
   S.view = view;
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   renderTop();
@@ -240,7 +252,8 @@ function renderHome() {
   const hero = h("div", { class: "hero" },
     h("div", { class: "eyebrow" },
       h("span", { class: "micro idx" }, String(S.sel + 1).padStart(2, "0") + " / " + String(games.length).padStart(2, "0")),
-      h("span", { class: "micro" }, g.archive ? "Archive" : g.title_id || "Folder")),
+      h("span", { class: "micro" }, g.archive ? "Archive" : g.title_id || "Folder"),
+      h("span", { class: "plat " + g.platform }, g.platform.toUpperCase())),
     g.logo ? h("img", { class: "logo", src: fileSrc(g.logo), alt: g.title }) : h("h1", { class: g.title.length > 22 ? "long" : "" }, g.title),
     h("div", { class: "meta" },
       h("span", {}, "Played ", h("b", {}, fmtTime(e.play_seconds, e.launches))),
@@ -268,7 +281,9 @@ function renderHome() {
       h("div", { class: "cover" },
         x.icon ? h("img", { src: fileSrc(x.icon), alt: "", loading: "lazy" }) : h("div", { class: "ph" }, initials(x.title)),
         h("span", { class: "num" }, String(i + 1).padStart(2, "0")),
-        xe.favorite ? h("span", { class: "fav" }) : null),
+        xe.favorite ? h("span", { class: "fav" }) : null,
+        x.platform === "ps4" ? h("span", { class: "plat ps4 corner" }, "PS4") : null,
+        xe.emu ? h("span", { class: "own", title: "Uses its own settings" }) : null),
       h("div", { class: "label" }, x.title)));
   });
   shelf.append(h("button", { class: "tile add", "data-nav": true, "data-nav-up": "#play", onclick: addFolder, title: "Add a folder" },
@@ -398,6 +413,8 @@ function openDrawer(id) {
         h("div", {}, h("div", { class: "micro" }, "Launches"), h("div", { class: "v" }, String(e.launches || 0))),
         h("div", {}, h("div", { class: "micro" }, "Size"), sizeEl),
         h("div", {}, h("div", { class: "micro" }, "Last played"), h("div", { class: "v" }, fmtAgo(e.last_played))),
+        h("div", {}, h("div", { class: "micro" }, "Platform"), h("div", { class: "v" }, g.platform.toUpperCase())),
+        h("div", {}, h("div", { class: "micro" }, "Engine"), h("div", { class: "v" }, e.engine ? ENGINE_NAME[e.engine] : e.good_engine ? `Auto · last worked: ${ENGINE_NAME[e.good_engine]}` : "Auto")),
         h("div", { style: { gridColumn: "1 / -1" } }, h("div", { class: "micro" }, "Location"), h("div", { class: "v mono", style: { fontSize: "12px" } }, g.path))),
       h("div", { class: "micro" }, "How does it run?"), statusRow, note));
   $("#scrim").classList.add("show");
@@ -438,11 +455,12 @@ function renderSettings() {
   const root = $("#view-settings .page");
   const game = S.perGame ? S.games.find((g) => g.id === S.perGame) : null;
   if (S.perGame && !game) S.perGame = null;
-  const sections = SECTIONS.filter((s) => !S.perGame || s.perGame);
+  const sections = SECTIONS.filter((s) => (S.perGame ? s.perGame : s.perGame !== "only") && (!s.devOnly || S.settings.dev.enabled));
   if (!sections.find((s) => s.id === S.section)) S.section = sections[0].id;
 
   let lastGroup = null;
   const list = h("div", { class: "sections" });
+  if (game) list.append(h("button", { class: "back", "data-nav": true, onclick: () => { S.perGame = null; renderSettings(); } }, h("span", {}, "← Global settings")));
   for (const s of sections) {
     if (s.group !== lastGroup && !S.perGame) { list.append(h("div", { class: "micro group" }, s.group)); lastGroup = s.group; }
     list.append(h("button", { class: S.section === s.id ? "on" : "", "data-nav": true, onclick: () => { S.section = s.id; renderSettings(); nav.focus($(`.sections .on`), { silent: true }); } }, h("span", {}, s.title)));
@@ -463,28 +481,27 @@ function renderPane() {
 function renderPaneInner() {
   const pane = $("#pane");
   const sec = SECTIONS.find((s) => s.id === S.section);
-  pane.replaceChildren(h("h3", {}, sec.title), sec.lead ? h("p", { class: "lead" }, sec.lead) : null);
+  pane.replaceChildren(...[h("h3", {}, sec.title), sec.lead ? h("p", { class: "lead" }, sec.lead) : null].filter(Boolean));
 
-  if (S.perGame) {
+  if (S.perGame && sec.fields) {
     const e = entry(S.perGame);
     const on = !!e.emu;
-    pane.append(h("div", { class: "banner " + (on ? "accent" : "") },
-      h("span", {}, on ? "This game uses its own settings. Changes here affect only this game." : "This game follows the global settings. Turn on custom settings to change them for this game only."),
-      h("button", { class: "switch" + (on ? " on" : ""), "data-nav": true, onclick: () => {
-        if (e.emu) { e.emu = null; e.perf = null; } else { e.emu = structuredClone(S.settings.emu); e.perf = structuredClone(S.settings.perf); }
-        save(); renderPane();
-      } })));
+    const diffs = on ? countDiffs(e) : 0;
+    add(pane, h("div", { class: "banner " + (on ? "accent" : "") },
+      h("span", {}, on ? `This game uses its own settings${diffs ? ` (${diffs} different from global, marked with a dot)` : ""}. Changes here affect only this game.` : "This game follows the global settings. Turn on custom settings to change them for this game only."),
+      on ? h("button", { class: "btn small", "data-nav": true, onclick: () => { e.emu = null; e.perf = null; save(); renderPane(); toast("Back to the global settings.", "ok"); } }, "Use global settings again")
+        : h("button", { class: "switch", "data-nav": true, onclick: () => { e.emu = structuredClone(S.settings.emu); e.perf = structuredClone(S.settings.perf); save(); renderPane(); } })));
   }
 
-  const custom = { profile: paneProfile, ram: paneRam, library: paneLibrary, engine: paneEngine, appearance: paneAppearance, about: paneAbout }[sec.custom];
+  const custom = { profile: paneProfile, ram: paneRam, library: paneLibrary, engine: paneEngines, appearance: paneAppearance, about: paneAbout, controls: paneControls, backups: paneBackups, gamedev: paneGameDev }[sec.custom];
   if (custom) custom(pane);
   if (sec.fields) {
     const target = activeEmu();
     const locked = S.perGame && !target._custom;
-    for (const f of sec.fields) pane.append(field(f, target, locked));
+    for (const f of sec.fields) add(pane, field(f, target, locked));
   }
   if (sec.id === "display" || sec.id === "rendering") {
-    pane.append(h("div", { style: { marginTop: "26px", display: "flex", gap: "10px" } },
+    add(pane, h("div", { style: { marginTop: "26px", display: "flex", gap: "10px" } },
       h("button", { class: "btn small", "data-nav": true, onclick: resetSection }, "Reset this page to defaults")));
   }
 }
@@ -498,8 +515,19 @@ async function resetSection() {
   save(); renderPane(); toast("Reset to defaults.", "ok");
 }
 
+function countDiffs(e) {
+  let n = 0;
+  for (const sec of SECTIONS) for (const f of sec.fields || []) {
+    if (!sec.perGame) continue;
+    const src = f.key.startsWith("emu.") ? e.emu : f.key.startsWith("perf.") ? e.perf : null;
+    if (src && JSON.stringify(src[f.key.slice(f.key.indexOf(".") + 1)]) !== JSON.stringify(get(S.settings, f.key))) n++;
+  }
+  return n;
+}
+
 function field(f, target, locked) {
   const val = get(target, f.key);
+  const differs = S.perGame && target._custom && (f.key.startsWith("emu.") || f.key.startsWith("perf.")) && JSON.stringify(val) !== JSON.stringify(get(S.settings, f.key));
   const requiresOff = f.requires && !get(target, f.requires);
   const write = (v) => {
     if (S.perGame && (f.key.startsWith("emu.") || f.key.startsWith("perf."))) {
@@ -511,7 +539,7 @@ function field(f, target, locked) {
     if (f.key.startsWith("ui.")) applyTheme();
     if (f.key === "dev.enabled") renderTop();
     save();
-    if (SECTIONS.find((s) => s.id === S.section)?.fields?.some((x) => x.requires === f.key)) renderPane();
+    if (S.perGame || SECTIONS.find((s) => s.id === S.section)?.fields?.some((x) => x.requires === f.key)) renderPane();
   };
   let ctl;
   switch (f.type) {
@@ -525,6 +553,15 @@ function field(f, target, locked) {
       }));
       if (f.key === "emu.resolution" && !f.options.includes(val)) sel.prepend(h("option", { value: val, selected: true }, val + " (custom)"));
       sel.addEventListener("change", () => write(typeof val === "number" ? Number(sel.value) : sel.value));
+      ctl = h("div", { class: "select" }, sel);
+      break;
+    }
+    case "refresh": {
+      const auto = S.monitorHz ? `Auto (${S.monitorHz} Hz on this monitor)` : "Auto (match monitor)";
+      const opts = [[0, auto], [30, "30 Hz"], [60, "60 Hz"], [75, "75 Hz"], [90, "90 Hz"], [120, "120 Hz"], [144, "144 Hz"], [165, "165 Hz"], [240, "240 Hz"], [280, "280 Hz"], [360, "360 Hz"]];
+      if (!opts.some((o) => o[0] === val)) opts.push([val, val + " Hz"]);
+      const sel = h("select", { "data-nav": true }, opts.map(([v, l]) => h("option", { value: String(v), selected: v === val }, l)));
+      sel.addEventListener("change", () => write(Number(sel.value)));
       ctl = h("div", { class: "select" }, sel);
       break;
     }
@@ -573,7 +610,7 @@ function field(f, target, locked) {
     }
   }
   return h("div", { class: "field" + (locked || requiresOff ? " disabled" : "") },
-    h("div", { class: "name" }, f.label, f.tag ? h("span", { class: "tag " + f.tag }, TAG_TEXT[f.tag]) : null),
+    h("div", { class: "name" }, differs ? h("span", { class: "diff", title: "Different from the global setting" }) : null, f.label, f.tag ? h("span", { class: "tag " + f.tag }, TAG_TEXT[f.tag]) : null),
     f.help ? h("div", { class: "help" }, f.help) : null,
     h("div", { class: "ctl" }, ctl));
 }
@@ -581,12 +618,12 @@ function field(f, target, locked) {
 function paneProfile(pane) {
   const p = S.profile, sys = S.sys;
   if (!p || !sys) {
-    pane.append(h("div", { class: "banner" }, S.loaded ? "Could not read the hardware. Check Developer → Logs." : "Reading hardware…",
+    add(pane, h("div", { class: "banner" }, S.loaded ? "Could not read the hardware. Check Developer → Logs." : "Reading hardware…",
       h("button", { class: "btn small", "data-nav": true, onclick: async () => { S.sys = await invoke("system_info", { refresh: true }).catch(() => null); S.profile = await invoke("auto_profile").catch(() => null); renderPane(); renderTop(); } }, "Try again")));
     return;
   }
   const gpu = sys.gpus.find((g) => g.name === p.gpu_name);
-  pane.append(h("div", { class: "pcard" },
+  add(pane, h("div", { class: "pcard" },
     h("div", { class: "micro" }, "Recommended for this PC"),
     h("div", { class: "tier" }, p.label),
     h("div", { class: "hw" },
@@ -598,13 +635,13 @@ function paneProfile(pane) {
       h("button", { class: "btn primary", "data-nav": true, disabled: p.tier === "unsupported", onclick: applyProfile }, S.settings.auto_profile ? "Apply again" : "Apply these settings"),
       h("button", { class: "btn", "data-nav": true, onclick: async () => { S.sys = await invoke("system_info", { refresh: true }); S.profile = await invoke("auto_profile"); renderPane(); renderTop(); } }, "Detect again"),
       S.settings.auto_profile ? h("span", { class: "micro" }, "Applied: " + S.settings.auto_profile) : null)));
-  pane.append(h("div", { class: "micro", style: { margin: "6px 0 10px" } }, "All graphics cards"));
+  add(pane, h("div", { class: "micro", style: { margin: "6px 0 10px" } }, "All graphics cards"));
   for (const g of sys.gpus) {
-    pane.append(h("div", { class: "field" },
+    add(pane, h("div", { class: "field" },
       h("div", { class: "name" }, `#${g.index}  ${g.name}`, h("span", { class: "tag " + (g.vulkan_ok ? "fps-up" : "risk") }, g.vulkan_ok ? "Vulkan " + g.vulkan : "Too old")),
       h("div", { class: "help" }, `${g.kind} · ${g.vram_mb} MB · ${g.vendor}${g.driver ? " · driver " + g.driver : ""}`)));
   }
-  if (sys.vulkan_error) pane.append(h("div", { class: "banner" }, sys.vulkan_error));
+  if (sys.vulkan_error) add(pane, h("div", { class: "banner" }, sys.vulkan_error));
 }
 
 async function applyProfile() {
@@ -636,7 +673,7 @@ function paneRam(pane) {
     h("option", { value: "strict", selected: perf.ram_mode === "strict" }, "Strict — close if exceeded"));
   modeSel.addEventListener("change", () => writePerf("ram_mode", modeSel.value));
   const on = perf.ram_limit_enabled;
-  pane.append(
+  add(pane, 
     h("div", { class: "field" + (locked ? " disabled" : "") },
       h("div", { class: "name" }, "Limit game memory"),
       h("div", { class: "help" }, "Caps how much RAM the game may use so the rest of your PC stays responsive. Most games want 8 GB or more."),
@@ -671,7 +708,7 @@ async function addFolder() {
 function paneLibrary(pane) {
   for (const f of S.settings.library_folders) {
     const isDefault = f === S.boot.games_dir;
-    pane.append(h("div", { class: "field" },
+    add(pane, h("div", { class: "field" },
       h("div", { class: "name mono", style: { fontSize: "13px", wordBreak: "break-all" } }, f, isDefault ? h("span", { class: "tag debug" }, "Default") : null),
       h("div", { class: "help" }, `${S.games.filter((g) => g.folder === f).length} game(s)`),
       h("div", { class: "ctl" },
@@ -681,57 +718,211 @@ function paneLibrary(pane) {
           await save(true); await refresh(); renderPane();
         } }, "Remove"))));
   }
-  pane.append(h("div", { style: { display: "flex", gap: "10px", marginTop: "22px" } },
+  add(pane, h("div", { style: { display: "flex", gap: "10px", marginTop: "22px" } },
     h("button", { class: "btn primary", "data-nav": true, onclick: addFolder }, "Add folder"),
     h("button", { class: "btn", "data-nav": true, onclick: async () => { await refresh(); renderPane(); toast(`${S.games.length} games found.`, "ok"); } }, "Scan again")));
 }
 
-function paneEngine(pane) {
-  const en = S.engine;
-  const dl = S.download;
-  const pct = dl && dl.total ? Math.round((dl.received / dl.total) * 100) : 0;
-  pane.append(
-    h("div", { class: "banner " + (en.path ? "" : "accent") },
-      h("span", {}, en.path ? (en.version || en.error || "Installed") : "The engine is not installed yet. Strata cannot start games without it."),
-      h("span", { class: "chip " + (en.path && !en.error ? "ok" : "warn") }, h("span", { class: "dot" }), en.path ? (en.error ? "Problem" : "Ready") : "Missing")),
-    h("div", { class: "field" },
-      h("div", { class: "name" }, "Engine location"),
-      h("div", { class: "help mono", style: { wordBreak: "break-all" } }, en.path || "—"),
+function dlMeter(dl) {
+  if (!dl) return null;
+  const pct = dl.total ? Math.round((dl.received / dl.total) * 100) : 0;
+  return h("div", { class: "meter" }, h("div", { class: "progress" }, h("div", { style: { width: (dl.stage === "done" ? 100 : pct) + "%" } })),
+    h("div", { class: "legend" }, h("span", { class: "micro" }, dl.stage === "error" ? "Error: " + dl.message : dl.stage), h("span", { class: "micro" }, dl.total ? `${(dl.received / 1048576).toFixed(0)} / ${(dl.total / 1048576).toFixed(0)} MB` : "")));
+}
+const busy = (id) => { const d = S.downloads[id]; return d && d.stage !== "done" && d.stage !== "error"; };
+
+function paneEngines(pane) {
+  if (S.perGame) return paneGameEngine(pane);
+  const es = S.settings.engines;
+  for (const en of S.engines) {
+    const dl = S.downloads[en.id];
+    add(pane, h("div", { class: "field engine-card" },
+      h("div", { class: "name" }, en.name, en.platforms.map((p) => h("span", { class: "plat " + p }, p.toUpperCase())),
+        h("span", { class: "chip " + (en.path ? "ok" : "warn"), style: { marginLeft: "8px" } }, h("span", { class: "dot" }), en.path ? "Installed" : "Not installed")),
+      h("div", { class: "help" }, en.summary, en.path ? h("div", { class: "mono", style: { fontSize: "11px", marginTop: "4px", wordBreak: "break-all" } }, en.release || en.path) : null),
       h("div", { class: "ctl" },
-        h("button", { class: "btn small", "data-nav": true, onclick: async () => {
-          const p = await invoke("pick_file");
-          if (p) { S.settings.engine_path = p; await save(true); await loadEngine(); renderPane(); renderTop(); }
-        } }, "Choose file"),
+        h("button", { class: "btn small", "data-nav": true, disabled: busy(en.id), onclick: () => downloadEngine(en.id) }, en.path ? "Update" : "Download"),
         h("button", { class: "btn small", "data-nav": true, onclick: async () => {
           const p = await invoke("pick_folder");
-          if (p) { S.settings.engine_path = p; await save(true); await loadEngine(); renderPane(); renderTop(); }
-        } }, "Choose folder"))),
-    h("div", { class: "field" },
-      h("div", { class: "name" }, "Download the latest engine"),
-      h("div", { class: "help" }, "Gets the newest official Windows build from github.com/KytyPS5/KytyPS5 into Strata's data folder (about 100 MB)."),
-      h("div", { class: "ctl" }, h("button", { class: "btn small", "data-nav": true, disabled: dl && dl.stage !== "done" && dl.stage !== "error", onclick: downloadEngine }, en.path ? "Update" : "Download")),
-      dl ? h("div", { class: "meter" }, h("div", { class: "progress" }, h("div", { style: { width: (dl.stage === "done" ? 100 : pct) + "%" } })),
-        h("div", { class: "legend" }, h("span", { class: "micro" }, dl.stage === "error" ? "Error: " + dl.message : dl.stage), h("span", { class: "micro" }, dl.total ? `${(dl.received / 1048576).toFixed(0)} / ${(dl.total / 1048576).toFixed(0)} MB` : ""))) : null),
-    h("div", { class: "field" },
-      h("div", { class: "name" }, "Use automatic location"),
-      h("div", { class: "help" }, "Forget the chosen path and look in Strata's engine folder."),
-      h("div", { class: "ctl" },
-        h("button", { class: "btn small", "data-nav": true, onclick: async () => { S.settings.engine_path = ""; await save(true); await loadEngine(); renderPane(); } }, "Reset"),
-        h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.engine }).catch(() => toast("The engine folder does not exist yet.", "warn")); } }, "Open folder"))));
+          if (!p) return;
+          es.paths[en.id] = p; await save(true); await loadEngines();
+          if (!S.engines.find((x) => x.id === en.id)?.path) toast(`No ${en.name} program found in that folder.`, "warn");
+          renderPane(); renderTop();
+        } }, "Choose folder"),
+        es.paths[en.id] ? h("button", { class: "btn small ghost", "data-nav": true, onclick: async () => { delete es.paths[en.id]; await save(true); await loadEngines(); renderPane(); } }, "Reset") : null),
+      dlMeter(dl)));
+  }
+  const orderRow = (label, key, platform) => {
+    const ids = es[key];
+    return h("div", { class: "field" },
+      h("div", { class: "name" }, label),
+      h("div", { class: "help" }, "Strata tries these from left to right. Use the arrows to change the order."),
+      h("div", { class: "ctl order" }, ids.map((id, i) => h("span", { class: "pill" + (S.engines.find((e) => e.id === id)?.path ? "" : " off") },
+        i > 0 ? h("button", { "data-nav": true, title: "Earlier", onclick: () => { [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]]; save(); renderPane(); } }, "‹") : null,
+        ENGINE_NAME[id] || id,
+        i < ids.length - 1 ? h("button", { "data-nav": true, title: "Later", onclick: () => { [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]]; save(); renderPane(); } }, "›") : null))));
+  };
+  add(pane, 
+    h("h4", { class: "sub" }, "Automatic engine choice"),
+    orderRow("PS5 games", "order_ps5", "ps5"),
+    orderRow("PS4 games", "order_ps4", "ps4"),
+    field({ key: "engines.auto_fallback", type: "toggle", label: "Try the next engine automatically", help: "If an engine closes or crashes right away, Strata starts the next one and writes everything to the log." }, S.settings),
+    field({ key: "engines.fail_seconds", type: "number", label: "Counts as failed before", min: 5, max: 120, step: 5, suffix: "s", requires: "engines.auto_fallback", help: "An engine that closes sooner than this is treated as not working for that game." }, S.settings),
+    h("div", { class: "field" }, h("div", { class: "name" }, "Engines folder"), h("div", { class: "help" }, "Releases, saves and caches of every engine."),
+      h("div", { class: "ctl" }, h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.engines }).catch(() => toast("Nothing downloaded yet.", "warn")); } }, "Open folder"))));
 }
 
-async function downloadEngine() {
-  S.download = { stage: "fetching", received: 0, total: 0, message: "" };
-  renderPane();
+function paneGameEngine(pane) {
+  const g = S.games.find((x) => x.id === S.perGame);
+  const e = entry(S.perGame);
+  const fits = S.engines.filter((en) => en.platforms.includes(g.platform) && (!g.archive || en.archives));
+  const sel = h("select", { "data-nav": true },
+    h("option", { value: "", selected: !e.engine }, "Automatic (recommended)"),
+    fits.map((en) => h("option", { value: en.id, selected: e.engine === en.id }, en.name + (en.path ? "" : " — not installed"))));
+  sel.addEventListener("change", () => { e.engine = sel.value; save(); renderPane(); });
+  add(pane, 
+    h("div", { class: "banner" }, h("span", {}, `${g.platform.toUpperCase()} game. ${e.good_engine ? `Last engine that ran it: ${ENGINE_NAME[e.good_engine]}.` : "No engine has run it yet."}`)),
+    h("div", { class: "field" }, h("div", { class: "name" }, "Engine for this game"),
+      h("div", { class: "help" }, "Automatic tries the engines in order (Settings → Engines) and remembers the one that worked."),
+      h("div", { class: "ctl" }, h("div", { class: "select" }, sel))),
+    e.good_engine ? h("div", { class: "field" }, h("div", { class: "name" }, "Forget the engine that worked"), h("div", { class: "help" }, "Next launch starts again from the first engine."),
+      h("div", { class: "ctl" }, h("button", { class: "btn small", "data-nav": true, onclick: () => { e.good_engine = ""; save(); renderPane(); } }, "Forget"))) : null);
+}
+
+async function downloadEngine(id = "kyty") {
+  S.downloads[id] = { stage: "fetching", received: 0, total: 0, message: "", engine: id };
+  if (id === "kyty") S.download = S.downloads[id];
+  if (S.view === "settings") renderPane();
+  if ($("#wizard").classList.contains("show")) renderWizard(true);
+  let ok = false;
   try {
-    const exe = await invoke("download_engine");
-    S.settings.engine_path = exe;
-    await loadEngine();
-    toast("Engine installed.", "ok");
-  } catch (e) { toast(String(e), "err"); }
+    const exe = await invoke("download_engine", { id });
+    S.settings.engines.paths[id] = exe;
+    if (id === "kyty") S.settings.engine_path = exe;
+    if (id === "shadps4") S.settings.engines.skip_ps4 = false;
+    ok = true;
+    toast(`${ENGINE_NAME[id]} installed.`, "ok");
+  } catch (e) { toast(`${ENGINE_NAME[id]}: ${e}`, "err"); }
+  await loadEngines();
   if (S.view === "settings") renderPane();
   renderTop();
-  if ($("#wizard").classList.contains("show")) renderWizard();
+  if ($("#wizard").classList.contains("show")) renderWizard(true);
+  return ok;
+}
+async function downloadMany(ids) {
+  for (const id of ids) if (!S.engines.find((e) => e.id === id)?.path) await downloadEngine(id);
+}
+
+function paneControls(pane) {
+  const info = S.controlInfo;
+  if (!info) { invoke("control_info").then((x) => { S.controlInfo = x; renderPane(); }); return; }
+  const own = S.perGame ? entry(S.perGame) : null;
+  const c = own ? own.controls || S.settings.controls : S.settings.controls;
+  const editable = !own || !!own.controls;
+  const writeC = (fn) => {
+    if (own && !own.controls) return;
+    fn(c); save(); renderPane();
+  };
+  if (own) {
+    add(pane, h("div", { class: "banner " + (own.controls ? "accent" : "") },
+      h("span", {}, own.controls ? "This game has its own keys." : "This game uses the global keys."),
+      own.controls ? h("button", { class: "btn small", "data-nav": true, onclick: () => { own.controls = null; save(); renderPane(); } }, "Use global keys again")
+        : h("button", { class: "btn small", "data-nav": true, onclick: () => { own.controls = structuredClone(S.settings.controls); own.controls.enabled = true; save(); renderPane(); } }, "Custom keys for this game")));
+  }
+  add(pane, h("div", { class: "banner" }, h("span", {}, "Keys apply to shadPS4 (PS4) and AnyPS5. KytyPS5 and SharpEmu use their own fixed layout; the options below this list still apply to KytyPS5.")));
+  const row = (label, help, ctl) => h("div", { class: "field" + (editable ? "" : " disabled") }, h("div", { class: "name" }, label), help ? h("div", { class: "help" }, help) : null, h("div", { class: "ctl" }, ctl));
+  add(pane, 
+    row("Let Strata set the keys", "Off = each engine keeps its own default keys. Your old files are kept as .bak.",
+      h("button", { class: "switch" + (c.enabled ? " on" : ""), "data-nav": true, onclick: () => writeC((x) => (x.enabled = !x.enabled)) })),
+    row("Swap Cross and Circle", "For controllers where you prefer the other confirm button.",
+      h("button", { class: "switch" + (c.swap_cross_circle ? " on" : ""), "data-nav": true, onclick: () => writeC((x) => (x.swap_cross_circle = !x.swap_cross_circle)) })),
+    row("Stick dead zone", "How far a stick moves before the game notices.",
+      h("div", { class: "stepper" }, h("button", { "data-nav": true, onclick: () => writeC((x) => (x.deadzone = Math.max(0, x.deadzone - 2))) }, "−"), h("span", { class: "val" }, c.deadzone + " %"),
+        h("button", { "data-nav": true, onclick: () => writeC((x) => (x.deadzone = Math.min(90, x.deadzone + 2))) }, "+"))));
+  const grid = h("div", { class: "keymap" + (editable && c.enabled ? "" : " disabled") });
+  for (const [action, label] of info.actions) {
+    const sel = h("select", { "data-nav": true }, info.keys.map((k) => h("option", { value: k, selected: c.keys[action] === k }, keyLabel(k))));
+    sel.addEventListener("change", () => writeC((x) => (x.keys[action] = sel.value)));
+    grid.append(h("label", {}, h("span", {}, label), h("div", { class: "select" }, sel)));
+  }
+  add(pane, h("h4", { class: "sub" }, "Keyboard and mouse"), grid,
+    h("div", { style: { marginTop: "14px" } }, h("button", { class: "btn small", "data-nav": true, onclick: () => writeC((x) => { x.keys = Object.fromEntries(info.actions.map(([a]) => [a, DEFAULT_KEYS[a]])); }) }, "Reset keys")));
+}
+const DEFAULT_KEYS = { cross: "space", circle: "c", square: "f", triangle: "r", l1: "q", r1: "e", l2: "mouse_right", r2: "mouse_left", l3: "lshift", r3: "v", options: "enter", touchpad: "tab", up: "up", down: "down", left: "left", right: "right", ls_up: "w", ls_down: "s", ls_left: "a", ls_right: "d", rs_up: "i", rs_down: "k", rs_left: "j", rs_right: "l" };
+function keyLabel(k) {
+  const names = { space: "Space", enter: "Enter", escape: "Esc", tab: "Tab", backspace: "Backspace", lshift: "Left Shift", rshift: "Right Shift", lctrl: "Left Ctrl", rctrl: "Right Ctrl", lalt: "Left Alt", ralt: "Right Alt", up: "↑", down: "↓", left: "←", right: "→", mouse_left: "Mouse left", mouse_right: "Mouse right", mouse_middle: "Mouse middle" };
+  if (names[k]) return names[k];
+  if (k.startsWith("kp")) return "Numpad " + k.slice(2);
+  return k.toUpperCase();
+}
+
+function paneBackups(pane) {
+  if (S.backups === null) { invoke("backup_list").then((b) => { S.backups = b; renderPane(); }).catch(() => (S.backups = [])); }
+  const g = S.perGame ? S.games.find((x) => x.id === S.perGame) : null;
+  let withShaders = false;
+  const make = async (btn) => {
+    btn.disabled = true;
+    try {
+      const p = await invoke("backup_create", { gameId: g ? g.id : null, shaders: withShaders });
+      toast("Backup saved: " + p.split(/[\\/]/).pop(), "ok");
+      S.backups = await invoke("backup_list");
+    } catch (e) { toast(String(e), "err"); }
+    btn.disabled = false;
+    renderPane();
+  };
+  add(pane, 
+    h("div", { class: "field" }, h("div", { class: "name" }, g ? `Back up ${g.title}` : "Back up all games"),
+      h("div", { class: "help" }, g ? "Saves of this game from every engine." : "Saves from every engine, in one file."),
+      h("div", { class: "ctl" }, h("button", { class: "btn small primary", "data-nav": true, onclick: (ev) => make(ev.currentTarget) }, "Back up now"))),
+    h("div", { class: "field" }, h("div", { class: "name" }, "Include shader caches"), h("div", { class: "help" }, "Bigger file, but games skip the shader stutter after a restore."),
+      h("div", { class: "ctl" }, h("button", { class: "switch", "data-nav": true, onclick: (ev) => { withShaders = !withShaders; ev.currentTarget.classList.toggle("on", withShaders); } }))),
+    h("h4", { class: "sub" }, "Backups"));
+  const list = (S.backups || []).filter((b) => !g || !g.title_id || b.title_id === g.title_id || !b.title_id);
+  if (!list.length) add(pane, h("div", { class: "micro" }, S.backups === null ? "Loading…" : "No backups yet."));
+  for (const b of list) {
+    add(pane, h("div", { class: "field" }, h("div", { class: "name" }, b.name),
+      h("div", { class: "help" }, `${b.title_id || "All games"} · ${b.folders} folder(s) · ${b.size_kb >= 1024 ? (b.size_kb / 1024).toFixed(1) + " MB" : b.size_kb + " KB"}`),
+      h("div", { class: "ctl" }, h("button", { class: "btn small", "data-nav": true, onclick: async () => {
+        const ok = await ask("Restore this backup?", "The saves in it replace the current ones. The current files are kept next to them as “.before-restore”.", "Restore");
+        if (!ok) return;
+        try { const n = await invoke("backup_restore", { file: b.file }); toast(`Restored ${n} file(s).`, "ok"); } catch (e) { toast(String(e), "err"); }
+      } }, "Restore"))));
+  }
+  add(pane, h("div", { style: { marginTop: "14px" } }, h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.backups }).catch(() => toast("No backups yet.", "warn")); } }, "Open backups folder")));
+}
+
+function paneGameDev(pane) {
+  const g = S.games.find((x) => x.id === S.perGame);
+  const e = entry(S.perGame);
+  const mine = logBuf.filter((l) => l.source === "engine" || l.source === "anyps5").slice(-60);
+  const r = S.running && S.running.game_id === g.id ? S.running : null;
+  add(pane, 
+    h("div", { class: "facts" },
+      h("div", {}, h("div", { class: "micro" }, "Folder"), h("div", { class: "v mono", style: { fontSize: "12px", wordBreak: "break-all" } }, g.path)),
+      h("div", {}, h("div", { class: "micro" }, "Title ID · platform"), h("div", { class: "v" }, `${g.title_id || "—"} · ${g.platform.toUpperCase()}`)),
+      h("div", {}, h("div", { class: "micro" }, "Engine that worked"), h("div", { class: "v" }, ENGINE_NAME[e.good_engine] || "—"))),
+    r ? h("div", { class: "cmd" }, r.command) : null,
+    h("div", { style: { display: "flex", gap: "8px", margin: "14px 0" } },
+      h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.logs }); } }, "Open session logs"),
+      h("button", { class: "btn small", "data-nav": true, onclick: async () => { try { const p = await invoke("export_diagnostics"); toast("Saved " + p, "ok"); } catch (x) { toast(String(x), "err"); } } }, "Export diagnostics"),
+      h("button", { class: "btn small", "data-nav": true, onclick: () => go("dev") }, "Open full console")),
+    h("h4", { class: "sub" }, "Latest engine log"),
+    h("div", { class: "cmd", style: { maxHeight: "300px", overflow: "auto" } }, mine.length ? mine.map((l) => `${l.level.padEnd(5)} ${l.msg}`).join("\n") : "Nothing yet. Play the game to see its log here."));
+}
+
+function ask(title, text, okLabel = "OK", cancelLabel = "Cancel") {
+  return new Promise((resolve) => {
+    const m = h("div", { class: "modal show dialog" });
+    const done = (v) => { m.remove(); nav.setScope(prevScope); resolve(v); };
+    const prevScope = $("#wizard").classList.contains("show") ? $("#wizard .sheet") : null;
+    m.append(h("div", { class: "sheet small" }, h("h2", {}, title), h("p", {}, text),
+      h("div", { style: { display: "flex", gap: "10px", justifyContent: "flex-end" } },
+        h("button", { class: "btn", "data-nav": true, onclick: () => done(false) }, cancelLabel),
+        h("button", { class: "btn primary", "data-nav": true, onclick: () => done(true) }, okLabel))));
+    document.body.append(m);
+    nav.setScope(m.querySelector(".sheet"));
+    setTimeout(() => nav.focus(m.querySelector(".btn.primary"), { silent: true }), 40);
+  });
 }
 
 function paneAppearance(pane) {
@@ -740,7 +931,7 @@ function paneAppearance(pane) {
     h("div", { class: "help" }, key === "accent1" ? "Main buttons, progress and highlights." : "Focus rings and secondary highlights."),
     h("div", { class: "ctl" }, h("div", { class: "swatches" }, ACCENTS.map((a) =>
       h("button", { class: "sw" + (S.settings.ui[key] === a ? " on" : ""), "data-nav": true, title: a, style: { background: PALETTE[a] }, onclick: () => { S.settings.ui[key] = a; applyTheme(); save(); renderPane(); renderTop(); } })))));
-  pane.append(row("accent1", "Accent 1"), row("accent2", "Accent 2"),
+  add(pane, row("accent1", "Accent 1"), row("accent2", "Accent 2"),
     h("div", { class: "field" },
       h("div", { class: "name" }, "Preview the boot"),
       h("div", { class: "help" }, "Plays the startup animation with the current colors."),
@@ -755,7 +946,7 @@ function previewBoot() {
 }
 
 function paneAbout(pane) {
-  pane.append(
+  add(pane, 
     h("div", { class: "pcard" },
       h("div", { style: { display: "flex", gap: "18px", alignItems: "center" } }, h("span", { html: MARK(), style: { width: "54px", height: "54px", display: "block" } }),
         h("div", {}, h("div", { class: "tier", style: { margin: 0 } }, "Strata"), h("div", { class: "micro" }, `Version ${S.boot.version}${S.boot.channel ? " " + S.boot.channel : ""} · ${S.boot.platform}`))),
@@ -773,6 +964,7 @@ function paneAbout(pane) {
 // ───────────────────────── developer ─────────────────────────
 const logBuf = [];
 function renderDev() {
+  invoke("skipped_folders").then((k) => { if (JSON.stringify(k) !== JSON.stringify(S.skipped)) { S.skipped = k; if (S.view === "dev") renderDev(); } }).catch(() => null);
   const root = $("#view-dev .page");
   const f = S.devFilter;
   const lvBtn = (lv) => h("button", { class: f[lv] ? "on" : "", "data-nav": true, onclick: (ev) => { f[lv] = !f[lv]; ev.currentTarget.classList.toggle("on", f[lv]); redrawLog(); } }, lv);
@@ -805,6 +997,8 @@ function renderDev() {
             ...r.notes.map((n) => h("div", { class: "micro", style: { margin: "6px 0", textTransform: "none", letterSpacing: "0" } }, n)),
             h("div", { class: "cmd" }, r.command)]
             : h("div", { class: "micro" }, "No game running.")),
+        S.skipped.length ? h("div", { class: "box" }, h("h4", {}, "Skipped folders", h("span", { class: "micro" }, String(S.skipped.length))),
+          S.skipped.map((k) => h("div", { class: "check warn" }, h("span", { class: "st" }), h("div", {}, h("div", { class: "mono", style: { fontSize: "12px", wordBreak: "break-all" } }, k.path), h("div", { class: "d" }, k.reason))))) : null,
         h("div", { class: "box" }, h("h4", {}, "System"),
           S.sys ? h("div", { class: "cmd" }, `${S.sys.os}\n${S.sys.cpu}\n${Math.round(S.sys.ram_mb / 1024)} GB RAM\n` + S.sys.gpus.map((g) => `#${g.index} ${g.name} · ${g.vram_mb} MB · Vulkan ${g.vulkan}`).join("\n") + `\nEngine: ${S.engine.version || S.engine.error || "—"}\nData: ${S.boot.data_dir}`) : null))));
   $("#loglines").style.whiteSpace = "normal";
@@ -860,11 +1054,6 @@ async function runTests() {
 // ───────────────────────── running a game ─────────────────────────
 async function launch(id) {
   if (S.running) return;
-  if (!S.engine.path) {
-    toast("Install the engine first (Settings → Engine).", "warn");
-    S.section = "engine"; S.perGame = null; go("settings");
-    return;
-  }
   try {
     const info = await invoke("launch_game", { id });
     // the game may already have exited (instant crash) before this resolved
@@ -875,8 +1064,25 @@ async function launch(id) {
     renderRunning();
     if (S.view === "home") { S.sel = 0; renderHome(); }
   } catch (err) {
+    const m = String(err).match(/need-engine:(ps4|ps5)/);
+    if (m) return needEngine(m[1], id);
     toast(String(err), "err");
   }
+}
+async function needEngine(platform, id) {
+  const g = S.games.find((x) => x.id === id);
+  const ps4 = platform === "ps4";
+  const ok = await ask(ps4 ? "This is a PS4 game" : "No engine for this game yet",
+    ps4 ? `${g?.title || "This game"} needs the PS4 engine (shadPS4, free and open source). Download it now? It takes a minute.`
+      : "Strata needs a PS5 engine to start games. Download KytyPS5, SharpEmu and AnyPS5 now?",
+    "Download");
+  if (!ok) return;
+  toast("Downloading… you can keep browsing.", "");
+  if (ps4) await downloadEngine("shadps4"); else await downloadMany(PS5_SET);
+  if (haveEngine(platform)) launch(id);
+}
+async function nextEngine() {
+  try { await invoke("next_engine"); } catch (e) { toast(String(e), "warn"); }
 }
 async function stopGame() {
   try { await invoke("stop_game"); } catch (e) { toast(String(e), "err"); }
@@ -885,8 +1091,12 @@ function renderRunning() {
   const el = $("#running");
   if (!S.running) { el.classList.add("hidden"); return; }
   el.classList.remove("hidden");
-  el.replaceChildren(h("span", { class: "pulse" }), h("span", { class: "t" }, S.running.title), h("span", { class: "time", id: "runtime" }, "0:00"),
-    h("button", { class: "btn small danger", "data-nav": true, onclick: stopGame }, "Stop"));
+  const r = S.running;
+  el.replaceChildren(...[h("span", { class: "pulse" }), h("span", { class: "t" }, r.title),
+    r.engine_name ? h("span", { class: "micro eng" }, `${r.engine_name}${r.attempts > 1 ? ` · ${r.attempt} of ${r.attempts}` : ""}`) : null,
+    h("span", { class: "time", id: "runtime" }, "0:00"),
+    r.attempt < r.attempts ? h("button", { class: "btn small", "data-nav": true, title: "Close this engine and try the next one", onclick: nextEngine }, "Try next engine") : null,
+    h("button", { class: "btn small danger", "data-nav": true, onclick: stopGame }, "Stop")].filter(Boolean));
 }
 setInterval(() => {
   const t = $("#runtime");
@@ -916,23 +1126,39 @@ function renderWizard(force = false) {
   m.replaceChildren(h("div", { class: "sheet" },
     h("div", { class: "micro" }, "Welcome"),
     h("h2", {}, "Let's set up Strata."),
-    h("p", {}, "Three quick steps. Everything can be changed later in Settings."),
+    h("p", {}, "Four quick steps. Everything can be changed later in Settings."),
     h("div", { class: "steps" },
       step(1, !!S.settings.auto_profile, p ? `Your PC: ${p.label}` : "Checking your PC…",
         !p ? "" : p.tier === "unsupported" ? (p.reasons[0] || "Update your graphics driver.") : `${p.gpu_name ? shortGpu(p.gpu_name) + " · " : ""}${Math.round((S.sys?.ram_mb || 0) / 1024)} GB RAM — tuned settings ready.`,
         h("button", { class: "btn small", "data-nav": true, disabled: !p || p.tier === "unsupported", onclick: async () => { await applyProfile(); renderWizard(true); } }, S.settings.auto_profile ? "Applied" : "Apply")),
-      step(2, !!S.engine.path, "Game engine",
-        S.engine.path ? (S.engine.version || "Installed")
-          : dl && dl.stage === "error" ? "Download failed. Check your internet connection, or choose an engine folder you already have."
-          : dl ? `${dl.stage}${dl.total ? ` · ${Math.round((dl.received / dl.total) * 100)}%` : ""}`
-          : "Download the open-source KytyPS5 engine (official GitHub release), or choose a folder you already have.",
-        S.engine.path ? h("span", { class: "micro" }, "Ready") : h("div", { style: { display: "flex", gap: "8px" } },
-          h("button", { class: "btn small", "data-nav": true, disabled: dl && dl.stage !== "error" && dl.stage !== "done", onclick: downloadEngine }, "Download"),
-          h("button", { class: "btn small", "data-nav": true, onclick: async () => {
-            const p = await invoke("pick_folder");
-            if (p) { S.settings.engine_path = p; await save(true); await loadEngine(); renderWizard(true); renderTop(); if (!S.engine.path) toast("No kyty_emulator found in that folder.", "warn"); }
-          } }, "Choose folder"))),
-      step(3, S.games.length > 0, "Your games", S.games.length ? `${S.games.length} found.` : "Put game folders in the Games folder, or add your own folder.",
+      (() => {
+        const have = PS5_SET.filter((id) => S.engines.find((e) => e.id === id)?.path);
+        const cur = PS5_SET.map((id) => S.downloads[id]).find((d) => d && d.stage !== "done" && d.stage !== "error");
+        return step(2, have.length > 0, "PS5 engines",
+          cur ? `${ENGINE_NAME[cur.engine]}: ${cur.stage}${cur.total ? ` · ${Math.round((cur.received / cur.total) * 100)}%` : ""}`
+            : have.length ? `${have.map((id) => ENGINE_NAME[id]).join(", ")} ready.${have.length < 3 ? " The others can be added later." : ""}`
+            : "Downloads KytyPS5, SharpEmu and AnyPS5 from their official GitHub releases. If one cannot run a game, Strata tries the next.",
+          have.length === 3 ? h("span", { class: "micro" }, "Ready") : h("div", { style: { display: "flex", gap: "8px" } },
+            h("button", { class: "btn small", "data-nav": true, disabled: !!cur, onclick: () => downloadMany(PS5_SET) }, have.length ? "Get the rest" : "Download all"),
+            h("button", { class: "btn small", "data-nav": true, onclick: async () => {
+              const p = await invoke("pick_folder");
+              if (p) { S.settings.engines.paths.kyty = p; S.settings.engine_path = p; await save(true); await loadEngines(); renderWizard(true); renderTop(); if (!haveEngine("ps5")) toast("No KytyPS5 found in that folder.", "warn"); }
+            } }, "Choose folder")));
+      })(),
+      (() => {
+        const ps4 = S.engines.find((e) => e.id === "shadps4");
+        const d = S.downloads.shadps4;
+        const skipped = S.settings.engines.skip_ps4;
+        return step(3, !!ps4?.path || skipped, "PS4 engine (optional)",
+          ps4?.path ? "shadPS4 ready. PS4 games start with it automatically."
+            : d && d.stage !== "done" && d.stage !== "error" ? `shadPS4: ${d.stage}${d.total ? ` · ${Math.round((d.received / d.total) * 100)}%` : ""}`
+            : skipped ? "Skipped. If you add a PS4 game later, Strata offers the download."
+            : "Only if you play PS4 games too. Adds shadPS4, the most mature PS4 emulator.",
+          ps4?.path ? h("span", { class: "micro" }, "Ready") : h("div", { style: { display: "flex", gap: "8px" } },
+            h("button", { class: "btn small", "data-nav": true, disabled: busy("shadps4"), onclick: () => downloadEngine("shadps4") }, "Download"),
+            skipped ? null : h("button", { class: "btn small ghost", "data-nav": true, onclick: () => { S.settings.engines.skip_ps4 = true; save(); renderWizard(true); } }, "I don't play PS4")));
+      })(),
+      step(4, S.games.length > 0, "Your games", S.games.length ? `${S.games.length} found.` : "Put game folders in the Games folder, or add your own folder.",
         h("div", { style: { display: "flex", gap: "8px" } },
           h("button", { class: "btn small", "data-nav": true, onclick: () => invoke("open_path", { path: S.boot.games_dir }) }, "Open"),
           h("button", { class: "btn small", "data-nav": true, onclick: async () => { await addFolder(); renderWizard(true); } }, "Add folder")))),
@@ -954,6 +1180,10 @@ async function refresh() {
 }
 async function loadEngine() {
   try { S.engine = await invoke("engine_info"); } catch (e) { S.engine = { path: null, version: null, error: String(e) }; }
+}
+async function loadEngines() {
+  try { S.engines = await invoke("engines_status"); } catch (e) { S.engines = []; }
+  await loadEngine();
 }
 
 // ───────────────────────── global keys ─────────────────────────
@@ -1013,20 +1243,23 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
     if (S.view === "dev") renderDev();
   });
   listen("engine-download", (p) => {
-    S.download = p;
+    S.downloads[p.engine || "kyty"] = p;
     if (S.view === "settings" && S.section === "engine") renderPane();
     if ($("#wizard").classList.contains("show")) renderWizard(true);
   });
+  listen("engine-fallback", (x) => toast(x.message, "warn"));
+  listen("engine-status", (x) => toast(x.message, ""));
   const [games] = await Promise.all([
     invoke("scan_games").catch(() => []),
     invoke("system_info", { refresh: false }).then((s) => (S.sys = s)).catch(() => null),
-    loadEngine(),
+    loadEngines(),
+    invoke("monitor_refresh").then((hz) => (S.monitorHz = hz)).catch(() => null),
     invoke("logs_since", { seq: 0 }).then((ls) => ls.forEach(appendLog)).catch(() => null),
   ]);
   S.games = games;
   S.profile = await invoke("auto_profile").catch(() => null);
   S.loaded = true;
-  log("info", `UI ready · ${S.games.length} games · engine ${S.engine.path ? "found" : "missing"}`);
+  log("info", `UI ready · ${S.games.length} games · engines: ${S.engines.filter((e) => e.path).map((e) => e.name).join(", ") || "none"}`);
   await bootDone;
   renderRunning();
   go("home");

@@ -1,8 +1,9 @@
-//! Engine integration: locating the engine, building its command line, running a game.
-//! The engine is the KytyPS5 emulator (GPL-2.0), driven purely through its CLI.
+//! Running engines: KytyPS5's command line, and starting/watching any engine process.
+//! Which engine runs what is decided in engines.rs.
 
 use crate::logs;
 use crate::settings::{DevSettings, EmuSettings, PerfSettings};
+
 use serde::Serialize;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -158,7 +159,7 @@ pub fn build_args(e: &EmuSettings, dev: &DevSettings, target: &str, logs_dir: &P
     flag(&mut a, e.relaxed_shader_float, "--relaxed-shader-float");
     flag(&mut a, e.native_rt, "--native-rt");
     flag(&mut a, e.shader_cache, "--shader-cache");
-    opt(&mut a, "--vblank-frequency", e.vblank_frequency);
+    opt(&mut a, "--vblank-frequency", crate::display::resolve_vblank(e.vblank_frequency, None));
     opt(&mut a, "--console-language", e.console_language);
     flag(&mut a, e.vulkan_validation, "--vulkan-validation");
     flag(&mut a, e.shader_validation, "--shader-validation");
@@ -206,6 +207,11 @@ fn hide_console(_cmd: &mut Command) {}
 #[derive(Clone, Debug, Serialize)]
 pub struct RunningInfo {
     pub game_id: String,
+    pub engine: String,
+    pub engine_name: String,
+    /// 1-based attempt number and how many engines may be tried.
+    pub attempt: usize,
+    pub attempts: usize,
     pub title: String,
     pub pid: u32,
     pub started_ms: u64,
@@ -218,6 +224,10 @@ pub struct Running {
     pub info: RunningInfo,
     pub child: Arc<Mutex<Child>>,
     pub started: Instant,
+    /// Set by Stop: the exit must not start the next engine.
+    pub stopped: Arc<std::sync::atomic::AtomicBool>,
+    /// Set by "Try next engine".
+    pub skip: Arc<std::sync::atomic::AtomicBool>,
     _guard: crate::memcap::Guard,
 }
 
@@ -225,17 +235,52 @@ pub struct ExitInfo {
     pub game_id: String,
     pub code: Option<i32>,
     pub seconds: u64,
+    pub stopped: bool,
+    pub skip: bool,
 }
 
 pub struct LaunchRequest<'a> {
-    pub engine: &'a Path,
+    pub plan: &'a crate::engines::Plan,
+    pub engine_id: &'a str,
+    pub engine_name: &'a str,
+    pub attempt: usize,
+    pub attempts: usize,
     pub game_id: &'a str,
     pub title: &'a str,
-    pub target: &'a str,
-    pub emu: &'a EmuSettings,
     pub perf: &'a PerfSettings,
-    pub dev: &'a DevSettings,
     pub data: &'a Path,
+}
+
+/// AnyPS5: converts the game once (cached until the eboot changes). Blocking.
+pub fn convert(relinker: &Path, args: &[String], output: &Path, source: &Path) -> Result<bool, String> {
+    let fresh = |o: &Path| -> bool {
+        let (Ok(om), Ok(sm)) = (o.metadata(), source.metadata()) else { return false };
+        matches!((om.modified(), sm.modified()), (Ok(a), Ok(b)) if a >= b)
+    };
+    if output.is_file() && fresh(output) {
+        return Ok(false);
+    }
+    if let Some(dir) = output.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut cmd = Command::new(relinker);
+    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(dir) = relinker.parent() {
+        cmd.current_dir(dir);
+    }
+    hide_console(&mut cmd);
+    logs::info("anyps5", "Converting the game (first launch only)…");
+    logs::debug("anyps5", &display_command(relinker, args));
+    let out = cmd.output().map_err(|e| format!("Could not start the AnyPS5 converter: {e}"))?;
+    for line in String::from_utf8_lossy(&out.stdout).lines().chain(String::from_utf8_lossy(&out.stderr).lines()) {
+        if !line.trim().is_empty() {
+            logs::log(logs::classify(line), "anyps5", line);
+        }
+    }
+    if !out.status.success() || !output.is_file() {
+        return Err(format!("AnyPS5 could not convert this game (code {:?}). See Developer → Logs.", out.status.code()));
+    }
+    Ok(true)
 }
 
 /// Starts the game. `on_exit` runs on a background thread when the engine exits.
@@ -243,25 +288,33 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
     let logs_dir = logs::logs_dir(req.data);
     let _ = std::fs::create_dir_all(logs_dir.join("shaders"));
     let _ = std::fs::create_dir_all(logs_dir.join("buffers"));
-    let args = build_args(req.emu, req.dev, req.target, &logs_dir);
-    let command = display_command(req.engine, &args);
+    let plan = req.plan;
+    let args = &plan.args;
+    let command = display_command(&plan.program, args);
 
     let safe_title: String = req.title.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).take(40).collect();
     let session_path = logs_dir.join(format!("session-{}-{}.log", logs::stamp(), safe_title));
     let session = Arc::new(Mutex::new(std::fs::File::create(&session_path).ok()));
     if let Some(f) = session.lock().unwrap().as_mut() {
-        let _ = writeln!(f, "# Strata session log\n# game: {}\n# target: {}\n# command: {}\n", req.title, req.target, command);
+        let _ = writeln!(
+            f,
+            "# Strata session log\n# game: {}\n# engine: {} (attempt {} of {})\n# command: {}\n",
+            req.title, req.engine_name, req.attempt, req.attempts, command
+        );
     }
 
-    let mut cmd = Command::new(req.engine);
-    cmd.args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    if let Some(dir) = req.engine.parent() {
-        cmd.current_dir(dir);
+    let mut cmd = Command::new(&plan.program);
+    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if plan.cwd.is_dir() || std::fs::create_dir_all(&plan.cwd).is_ok() {
+        cmd.current_dir(&plan.cwd);
+    }
+    for (k, v) in &plan.env {
+        cmd.env(k, v);
     }
     hide_console(&mut cmd);
-    logs::info("engine", &format!("Starting {}", req.title));
+    logs::info("engine", &format!("Starting {} with {} ({} of {})", req.title, req.engine_name, req.attempt, req.attempts));
     logs::debug("engine", &command);
-    let mut child = cmd.spawn().map_err(|e| format!("Could not start the engine: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| format!("Could not start {}: {e}", req.engine_name))?;
 
     let limit = req.perf.ram_limit_enabled.then(|| (req.perf.ram_limit_gb, crate::memcap::parse_mode(&req.perf.ram_mode)));
     let (guard, notes) = crate::memcap::apply(&child, limit, &req.perf.priority);
@@ -303,7 +356,10 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
     let child = Arc::new(Mutex::new(child));
     let started = Instant::now();
     let started_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let skip = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
+        let (stopped, skip) = (stopped.clone(), skip.clone());
         let child = child.clone();
         let game_id = req.game_id.to_string();
         let session = session.clone();
@@ -320,13 +376,18 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
             if let Some(f) = session.lock().unwrap().as_mut() {
                 let _ = writeln!(f, "\n# exited with code {code:?} after {seconds} s");
             }
-            on_exit(ExitInfo { game_id, code, seconds });
+            use std::sync::atomic::Ordering::SeqCst;
+            on_exit(ExitInfo { game_id, code, seconds, stopped: stopped.load(SeqCst), skip: skip.load(SeqCst) });
         });
     }
 
     Ok(Running {
         info: RunningInfo {
             game_id: req.game_id.to_string(),
+            engine: req.engine_id.to_string(),
+            engine_name: req.engine_name.to_string(),
+            attempt: req.attempt,
+            attempts: req.attempts,
             title: req.title.to_string(),
             pid,
             started_ms,
@@ -336,6 +397,8 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
         },
         child,
         started,
+        stopped,
+        skip,
         _guard: guard,
     })
 }

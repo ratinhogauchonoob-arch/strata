@@ -1,7 +1,11 @@
 //! Strata — a launcher frontend. The UI lives in ../ui; this side talks to the OS and the engine.
 
+pub mod backups;
+pub mod controls;
+pub mod display;
 pub mod download;
 pub mod engine;
+pub mod engines;
 pub mod games;
 pub mod gpu;
 pub mod logs;
@@ -26,6 +30,7 @@ pub struct AppState {
     pub running: Arc<Mutex<Option<engine::Running>>>,
     pub sys: Mutex<Option<gpu::SystemInfo>>,
     pub games: Mutex<Vec<games::Game>>,
+    pub skipped: Mutex<Vec<games::Skipped>>,
 }
 
 impl AppState {
@@ -63,7 +68,10 @@ fn bootstrap(state: State<AppState>) -> Bootstrap {
         s.library_folders.insert(0, gd.clone());
         let _ = state.save(&s);
     }
-    let engine = engine::find_engine(&s.engine_path, &state.data).map(|p| p.to_string_lossy().into_owned());
+    let engine = engines::ENGINES
+        .iter()
+        .find_map(|d| engines::find(d, &s.engine_path(d.id), &state.data))
+        .map(|p| p.to_string_lossy().into_owned());
     Bootstrap {
         app: APP_NAME,
         version: APP_VERSION,
@@ -137,10 +145,19 @@ async fn apply_auto_profile(state: State<'_, AppState>) -> Result<Settings, Stri
 async fn scan_games(state: State<'_, AppState>) -> Result<Vec<games::Game>, String> {
     let folders = state.settings.lock().unwrap().library_folders.clone();
     let t = std::time::Instant::now();
-    let list = tauri::async_runtime::spawn_blocking(move || games::scan(&folders, false)).await.map_err(|e| e.to_string())?;
+    let (list, skipped) = tauri::async_runtime::spawn_blocking(move || games::scan_report(&folders, false)).await.map_err(|e| e.to_string())?;
     logs::info("library", &format!("{} game(s) found in {} ms", list.len(), t.elapsed().as_millis()));
+    for sk in &skipped {
+        logs::debug("library", &format!("Skipped {}: {}", sk.path, sk.reason));
+    }
     *state.games.lock().unwrap() = list.clone();
+    *state.skipped.lock().unwrap() = skipped;
     Ok(list)
+}
+
+#[tauri::command]
+fn skipped_folders(state: State<AppState>) -> Vec<games::Skipped> {
+    state.skipped.lock().unwrap().clone()
 }
 
 #[tauri::command]
@@ -193,8 +210,50 @@ struct GameExit {
     message: String,
 }
 
+#[derive(Clone, Serialize)]
+struct EngineEvent {
+    game_id: String,
+    message: String,
+}
+
+/// Everything one launch needs, carried from one engine attempt to the next.
+#[derive(Clone)]
+struct Attempt {
+    game: games::Game,
+    chain: Vec<String>,
+    idx: usize,
+    emu: settings::EmuSettings,
+    perf: settings::PerfSettings,
+    dev: settings::DevSettings,
+    controls: settings::ControlSettings,
+    fail_seconds: u32,
+    failures: Vec<String>,
+}
+
+fn engine_name(id: &str) -> &'static str {
+    engines::def(id).map(|d| d.name).unwrap_or("engine")
+}
+
+fn installed_fn(s: &Settings, data: &std::path::Path) -> impl Fn(&str) -> bool {
+    let paths = s.engines.paths.clone();
+    let data = data.to_path_buf();
+    move |id: &str| engines::def(id).is_some_and(|d| engines::find(d, paths.get(id).map(String::as_str).unwrap_or(""), &data).is_some())
+}
+
+/// Refresh rate of the monitor Strata's window is on.
+fn monitor_hz(app: &AppHandle) -> Option<u32> {
+    let w = app.get_webview_window("main")?;
+    let m = w.current_monitor().ok()??;
+    display::refresh_rate(m.name()?)
+}
+
 #[tauri::command]
-fn launch_game(app: AppHandle, state: State<AppState>, id: String) -> Result<engine::RunningInfo, String> {
+fn monitor_refresh(app: AppHandle) -> Option<u32> {
+    monitor_hz(&app)
+}
+
+#[tauri::command]
+async fn launch_game(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<engine::RunningInfo, String> {
     if state.running.lock().unwrap().is_some() {
         return Err("A game is already running. Stop it first.".into());
     }
@@ -206,89 +265,191 @@ fn launch_game(app: AppHandle, state: State<AppState>, id: String) -> Result<eng
         .find(|g| g.id == id)
         .cloned()
         .ok_or("Game not found — refresh the library.")?;
-    let (engine_path, emu, perf, dev) = {
+    let attempt = {
         let s = state.settings.lock().unwrap();
-        let e = engine::find_engine(&s.engine_path, &state.data)
-            .ok_or("Engine not found. Open Settings → Engine to download it or choose its folder.")?;
-        (e, s.emu_for(&id), s.perf_for(&id), s.dev.clone())
+        let entry = s.games.get(&id).cloned().unwrap_or_default();
+        let platform = engines::Platform::parse(&game.platform);
+        let order = if platform == engines::Platform::Ps4 { &s.engines.order_ps4 } else { &s.engines.order_ps5 };
+        let installed = installed_fn(&s, &state.data);
+        let chain = engines::chain(&game, order, &entry.engine, &entry.good_engine, s.engines.auto_fallback, &installed);
+        if chain.is_empty() {
+            // The UI turns this into a friendly prompt with a Download button.
+            return Err(format!("need-engine:{}", platform.as_str()));
+        }
+        Attempt {
+            game: game.clone(),
+            chain,
+            idx: 0,
+            emu: s.emu_for(&id),
+            perf: s.perf_for(&id),
+            dev: s.dev.clone(),
+            controls: s.controls_for(&id),
+            fail_seconds: s.engines.fail_seconds,
+            failures: vec![],
+        }
     };
+    let mut attempt = attempt;
     // "Automatic" on a PC with two GPUs: the engine may pick the integrated one, so pin the best one.
-    let mut emu = emu;
-    if emu.gpu_index < 0 {
+    if attempt.emu.gpu_index < 0 {
         let cached = state.sys.lock().unwrap().clone();
-        let sys = cached.unwrap_or_else(|| {
-            let s = gpu::system_info();
-            *state.sys.lock().unwrap() = Some(s.clone());
-            s
-        });
+        let sys = match cached {
+            Some(s) => s,
+            None => {
+                let s = tauri::async_runtime::spawn_blocking(gpu::system_info).await.map_err(|e| e.to_string())?;
+                *state.sys.lock().unwrap() = Some(s.clone());
+                s
+            }
+        };
         if sys.gpus.len() > 1 {
             if let Some(best) = gpu::best_gpu(&sys.gpus) {
-                emu.gpu_index = best.index;
+                attempt.emu.gpu_index = best.index;
                 logs::info("engine", &format!("Automatic GPU: using #{} {}", best.index, best.name));
             }
         }
     }
-    let target = engine::game_target(&game.path, game.archive);
-
-    let settings = state.settings.clone();
-    let running = state.running.clone();
-    let data = state.data.clone();
-    let app2 = app.clone();
-    let on_exit = move |x: engine::ExitInfo| {
-        let message = engine::explain_exit(x.code);
-        if x.code.unwrap_or(0) == 0 {
-            logs::info("engine", &message);
-        } else {
-            logs::error("engine", &message);
-        }
-        {
-            let mut s = settings.lock().unwrap();
-            let entry = s.games.entry(x.game_id.clone()).or_default();
-            entry.play_seconds += x.seconds;
-            let _ = s.save(&data.join("settings.json"));
-            logs::prune_sessions(&data, s.dev.keep_sessions.max(1) as usize);
-        }
-        {
-            // Only clear the slot if it still belongs to this game (a new one may have started).
-            let mut slot = running.lock().unwrap();
-            if slot.as_ref().is_some_and(|r| r.info.game_id == x.game_id) {
-                *slot = None;
-            }
-        }
-        let _ = app2.emit("game-exit", GameExit { game_id: x.game_id, code: x.code, seconds: x.seconds, message });
-        if let Some(w) = app2.get_webview_window("main") {
-            let _ = w.unminimize();
-            let _ = w.set_focus();
-        }
-    };
-
-    let r = engine::launch(
-        engine::LaunchRequest {
-            engine: &engine_path,
-            game_id: &id,
-            title: &game.title,
-            target: &target,
-            emu: &emu,
-            perf: &perf,
-            dev: &dev,
-            data: &state.data,
-        },
-        on_exit,
-    )?;
-    let info = r.info.clone();
+    // Virtual refresh rate "Auto": match the monitor Strata is on.
+    if attempt.emu.vblank_frequency == 0 {
+        let hz = monitor_hz(&app);
+        attempt.emu.vblank_frequency = display::resolve_vblank(0, hz);
+        logs::info("engine", &format!("Automatic refresh rate: {} Hz{}", attempt.emu.vblank_frequency, if hz.is_none() { " (monitor not detected)" } else { "" }));
+    }
+    logs::info("engine", &format!("{} ({}) — engines to try: {}", game.title, game.platform.to_uppercase(), attempt.chain.iter().map(|i| engine_name(i)).collect::<Vec<_>>().join(" → ")));
     {
         let mut s = state.settings.lock().unwrap();
         let entry = s.games.entry(id.clone()).or_default();
         entry.launches += 1;
-        entry.last_played = Some((info.started_ms / 1000) as i64);
+        entry.last_played = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0));
         let _ = state.save(&s);
     }
-    let exited_already = r.child.lock().unwrap().try_wait().ok().flatten().is_some();
-    if !exited_already {
-        *state.running.lock().unwrap() = Some(r);
-        let _ = app.emit("game-start", &info);
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || start_attempt(app2, attempt)).await.map_err(|e| e.to_string())?
+}
+
+/// Tries the engines of the chain from `a.idx` until one starts. Blocking.
+fn start_attempt(app: AppHandle, mut a: Attempt) -> Result<engine::RunningInfo, String> {
+    let state = app.state::<AppState>();
+    while a.idx < a.chain.len() {
+        let id = a.chain[a.idx].clone();
+        let Some(def) = engines::def(&id) else {
+            a.idx += 1;
+            continue;
+        };
+        let configured = state.settings.lock().unwrap().engine_path(&id);
+        let Some(exe) = engines::find(def, &configured, &state.data) else {
+            a.failures.push(format!("{}: not installed", def.name));
+            a.idx += 1;
+            continue;
+        };
+        let key = if a.game.title_id.is_empty() { engines::safe_key(&a.game.id) } else { a.game.title_id.clone() };
+        let controls_file = match controls::write_for(def.kind, &a.controls, &state.data, &a.game.title_id, &key) {
+            Ok(f) => f,
+            Err(e) => {
+                logs::warn("controls", &format!("Could not write controls for {}: {e}", def.name));
+                None
+            }
+        };
+        let plan = engines::plan(def, engines::PlanInput { exe: &exe, game: &a.game, emu: &a.emu, dev: &a.dev, data: &state.data, controls_file });
+        if let Some(conv) = &plan.convert {
+            let _ = app.emit("engine-status", EngineEvent { game_id: a.game.id.clone(), message: format!("Preparing {} for {} (first launch only)…", a.game.title, def.name) });
+            if let Err(e) = engine::convert(&exe, conv, &plan.program, std::path::Path::new(&engines::eboot(&a.game))) {
+                logs::error("anyps5", &e);
+                a.failures.push(format!("{}: {e}", def.name));
+                a.idx += 1;
+                continue;
+            }
+        }
+        let on_exit = {
+            let app = app.clone();
+            let a = a.clone();
+            move |x: engine::ExitInfo| on_engine_exit(app, a, x)
+        };
+        match engine::launch(
+            engine::LaunchRequest {
+                plan: &plan,
+                engine_id: def.id,
+                engine_name: def.name,
+                attempt: a.idx + 1,
+                attempts: a.chain.len(),
+                game_id: &a.game.id,
+                title: &a.game.title,
+                perf: &a.perf,
+                data: &state.data,
+            },
+            on_exit,
+        ) {
+            Ok(r) => {
+                let info = r.info.clone();
+                // Hold the slot while checking, so an exit right now clears it after we fill it.
+                let mut slot = state.running.lock().unwrap();
+                let exited_already = r.child.lock().unwrap().try_wait().ok().flatten().is_some();
+                if !exited_already {
+                    *slot = Some(r);
+                    let _ = app.emit("game-start", &info);
+                }
+                return Ok(info);
+            }
+            Err(e) => {
+                logs::error("engine", &e);
+                a.failures.push(format!("{}: {e}", def.name));
+                a.idx += 1;
+            }
+        }
     }
-    Ok(info)
+    let tried = if a.failures.is_empty() { String::new() } else { format!(" Tried: {}.", a.failures.join("; ")) };
+    Err(format!("No engine could start {}.{tried}", a.game.title))
+}
+
+fn on_engine_exit(app: AppHandle, a: Attempt, x: engine::ExitInfo) {
+    let state = app.state::<AppState>();
+    let id = a.chain[a.idx].clone();
+    let name = engine_name(&id);
+    let mut message = engine::explain_exit(x.code);
+    if x.code.unwrap_or(0) == 0 {
+        logs::info("engine", &format!("{name}: {message}"));
+    } else {
+        logs::error("engine", &format!("{name}: {message}"));
+    }
+    let failed = engines::attempt_failed(x.code, x.seconds, a.fail_seconds, x.stopped, x.skip);
+    {
+        let mut s = state.settings.lock().unwrap();
+        let keep = s.dev.keep_sessions.max(1) as usize;
+        let entry = s.games.entry(x.game_id.clone()).or_default();
+        entry.play_seconds += x.seconds;
+        if !failed && x.seconds >= a.fail_seconds as u64 {
+            entry.good_engine = id.clone();
+        }
+        let _ = s.save(&state.data.join("settings.json"));
+        logs::prune_sessions(&state.data, keep);
+    }
+    {
+        let mut slot = state.running.lock().unwrap();
+        if slot.as_ref().is_some_and(|r| r.info.game_id == x.game_id) {
+            *slot = None;
+        }
+    }
+    if failed && a.idx + 1 < a.chain.len() {
+        let next_name = engine_name(&a.chain[a.idx + 1]);
+        let why = if x.skip { "skipped".to_string() } else { format!("closed after {} s", x.seconds) };
+        let msg = format!("{name} {why} — trying {next_name}…");
+        logs::warn("engine", &msg);
+        let _ = app.emit("engine-fallback", EngineEvent { game_id: x.game_id.clone(), message: msg });
+        let mut next = a.clone();
+        next.failures.push(format!("{name}: {why}"));
+        next.idx += 1;
+        if let Err(e) = start_attempt(app.clone(), next) {
+            logs::error("engine", &e);
+            message = e;
+        } else {
+            return;
+        }
+    } else if failed && a.chain.len() > 1 && !x.stopped {
+        message = format!("{message} No other engine is left to try.");
+    }
+    let _ = app.emit("game-exit", GameExit { game_id: x.game_id, code: x.code, seconds: x.seconds, message });
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
 }
 
 #[tauri::command]
@@ -296,6 +457,21 @@ fn stop_game(state: State<AppState>) -> Result<(), String> {
     let guard = state.running.lock().unwrap();
     let Some(r) = guard.as_ref() else { return Ok(()) };
     logs::info("engine", &format!("Stopping {} (ran {} s)", r.info.title, r.started.elapsed().as_secs()));
+    r.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+    let res = r.child.lock().unwrap().kill().map_err(|e| e.to_string());
+    res
+}
+
+/// Closes the current engine and starts the next one in the chain.
+#[tauri::command]
+fn next_engine(state: State<AppState>) -> Result<(), String> {
+    let guard = state.running.lock().unwrap();
+    let Some(r) = guard.as_ref() else { return Ok(()) };
+    if r.info.attempt >= r.info.attempts {
+        return Err("This was the last engine for this game.".into());
+    }
+    logs::info("engine", &format!("Skipping {} for {}", r.info.engine_name, r.info.title));
+    r.skip.store(true, std::sync::atomic::Ordering::SeqCst);
     let res = r.child.lock().unwrap().kill().map_err(|e| e.to_string());
     res
 }
@@ -349,10 +525,11 @@ struct EngineInfo {
     error: Option<String>,
 }
 
+/// KytyPS5 details (it answers --help with its version).
 #[tauri::command]
 async fn engine_info(state: State<'_, AppState>) -> Result<EngineInfo, String> {
-    let (configured, data) = (state.settings.lock().unwrap().engine_path.clone(), state.data.clone());
-    tauri::async_runtime::spawn_blocking(move || match engine::find_engine(&configured, &data) {
+    let (configured, data) = (state.settings.lock().unwrap().engine_path("kyty"), state.data.clone());
+    tauri::async_runtime::spawn_blocking(move || match engines::find(engines::def("kyty").unwrap(), &configured, &data) {
         None => EngineInfo { path: None, version: None, error: Some("not installed".into()) },
         Some(p) => {
             let path = Some(p.to_string_lossy().into_owned());
@@ -366,27 +543,132 @@ async fn engine_info(state: State<'_, AppState>) -> Result<EngineInfo, String> {
     .map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+struct EngineStatus {
+    id: &'static str,
+    name: &'static str,
+    repo: &'static str,
+    summary: &'static str,
+    platforms: Vec<&'static str>,
+    archives: bool,
+    path: Option<String>,
+    /// Release folder name (engines are never started just to ask their version).
+    release: Option<String>,
+    controls: bool,
+}
+
 #[tauri::command]
-async fn download_engine(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+fn engines_status(state: State<AppState>) -> Vec<EngineStatus> {
+    let s = state.settings.lock().unwrap();
+    engines::ENGINES
+        .iter()
+        .map(|d| {
+            let p = engines::find(d, &s.engine_path(d.id), &state.data);
+            EngineStatus {
+                id: d.id,
+                name: d.name,
+                repo: d.repo,
+                summary: d.summary,
+                platforms: d.platforms.iter().map(|p| p.as_str()).collect(),
+                archives: d.archives,
+                release: p.as_ref().and_then(|x| x.parent()).and_then(|x| x.file_name()).map(|n| n.to_string_lossy().into_owned()),
+                path: p.map(|x| x.to_string_lossy().into_owned()),
+                controls: matches!(d.kind, engines::Kind::ShadPs4 | engines::Kind::AnyPs5),
+            }
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn download_engine(app: AppHandle, state: State<'_, AppState>, id: Option<String>) -> Result<String, String> {
+    let id = id.unwrap_or_else(|| "kyty".into());
+    let def = engines::def(&id).ok_or("Unknown engine.")?;
     let data = state.data.clone();
     let app2 = app.clone();
     let dest = tauri::async_runtime::spawn_blocking(move || {
-        download::download_latest(&data, &|p| {
+        download::download_latest(def, &data, &|p| {
             let _ = app2.emit("engine-download", &p);
         })
     })
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| {
-        logs::error("download", &e);
-        let _ = app.emit("engine-download", download::Progress { stage: "error".into(), received: 0, total: 0, message: e.clone() });
+        logs::error("download", &format!("{}: {e}", def.name));
+        let _ = app.emit("engine-download", download::Progress { stage: "error".into(), received: 0, total: 0, message: e.clone(), engine: def.id.into() });
         e
     })?;
-    let exe = engine::find_engine(&dest.to_string_lossy(), &state.data).ok_or("Downloaded, but the engine executable was not inside.")?;
+    let exe = engines::find(def, &dest.to_string_lossy(), &state.data).ok_or(format!("Downloaded, but {} was not inside the release.", def.name))?;
     let mut s = state.settings.lock().unwrap();
-    s.engine_path = exe.to_string_lossy().into_owned();
+    // The fresh download wins over an older folder chosen by hand.
+    s.engines.paths.insert(id.clone(), exe.to_string_lossy().into_owned());
+    if id == "kyty" {
+        s.engine_path = exe.to_string_lossy().into_owned();
+    }
+    if engines::def(&id).is_some_and(|d| d.platforms.contains(&engines::Platform::Ps4)) && id == "shadps4" {
+        s.engines.skip_ps4 = false;
+    }
     state.save(&s)?;
-    Ok(s.engine_path.clone())
+    logs::info("download", &format!("{} ready: {}", def.name, exe.display()));
+    Ok(exe.to_string_lossy().into_owned())
+}
+
+#[derive(Serialize)]
+struct ControlInfo {
+    actions: Vec<(&'static str, &'static str)>,
+    keys: Vec<String>,
+}
+
+#[tauri::command]
+fn control_info() -> ControlInfo {
+    let mut keys: Vec<String> = ('a'..='z').map(String::from).collect();
+    keys.extend(('0'..='9').map(String::from));
+    keys.extend((1..=12).map(|n| format!("f{n}")));
+    keys.extend((0..=9).map(|n| format!("kp{n}")));
+    keys.extend(controls::KEYS.iter().map(|k| k.0.to_string()));
+    ControlInfo { actions: controls::ACTIONS.iter().map(|(a, l, _)| (*a, *l)).collect(), keys }
+}
+
+fn backup_roots(state: &AppState) -> Vec<(String, PathBuf)> {
+    let s = state.settings.lock().unwrap();
+    engines::ENGINES
+        .iter()
+        .flat_map(|d| {
+            let exe = engines::find(d, &s.engine_path(d.id), &state.data);
+            engines::user_dirs(d, &state.data, exe.as_deref()).into_iter().map(move |p| (d.id.to_string(), p))
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn backup_create(state: State<'_, AppState>, game_id: Option<String>, shaders: bool) -> Result<String, String> {
+    let game = game_id.and_then(|id| state.games.lock().unwrap().iter().find(|g| g.id == id).cloned());
+    let roots = backup_roots(&state);
+    let data = state.data.clone();
+    let (label, title_id) = game.map(|g| (g.title, g.title_id)).unwrap_or(("All games".into(), String::new()));
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let sources = backups::find_sources(&roots, &title_id, shaders);
+        backups::create(&data, &label, &title_id, &sources, &logs::stamp())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let (path, files) = res?;
+    logs::info("backup", &format!("Saved {files} file(s) to {}", path.display()));
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn backup_list(state: State<AppState>) -> Vec<backups::BackupInfo> {
+    backups::list(&state.data)
+}
+
+#[tauri::command]
+async fn backup_restore(state: State<'_, AppState>, file: String) -> Result<usize, String> {
+    if state.running.lock().unwrap().is_some() {
+        return Err("Close the game before restoring a backup.".into());
+    }
+    let n = tauri::async_runtime::spawn_blocking(move || backups::restore(std::path::Path::new(&file))).await.map_err(|e| e.to_string())??;
+    logs::info("backup", &format!("Restored {n} file(s)"));
+    Ok(n)
 }
 
 #[tauri::command]
@@ -421,6 +703,8 @@ fn paths(state: State<AppState>) -> serde_json::Value {
         "logs": logs::logs_dir(&state.data),
         "games": state.default_games_dir(),
         "engine": state.data.join("engine"),
+        "engines": state.data.join("engines"),
+        "backups": backups::backups_dir(&state.data),
     })
 }
 
@@ -440,6 +724,7 @@ pub fn run() {
             running: Arc::new(Mutex::new(None)),
             sys: Mutex::new(None),
             games: Mutex::new(Vec::new()),
+            skipped: Mutex::new(Vec::new()),
         })
         .setup(move |app| {
             logs::init(&data, Some(app.handle().clone()), &settings.dev.log_level);
@@ -458,7 +743,15 @@ pub fn run() {
             open_path,
             launch_game,
             stop_game,
+            next_engine,
             running_game,
+            monitor_refresh,
+            skipped_folders,
+            engines_status,
+            control_info,
+            backup_create,
+            backup_list,
+            backup_restore,
             logs_since,
             clear_logs,
             ui_log,

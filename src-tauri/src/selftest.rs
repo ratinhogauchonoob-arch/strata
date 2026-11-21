@@ -53,18 +53,34 @@ pub fn run_all(s: &Settings, data: &Path) -> Vec<Check> {
         }
     });
 
-    let engine_path = engine::find_engine(&s.engine_path, data);
-    run(&mut out, "Engine found", || match &engine_path {
-        Some(p) => ("pass", p.display().to_string()),
-        None => ("fail", "kyty_emulator was not found. Settings → Engine → Download or choose its folder.".into()),
+    let installed: Vec<&str> = crate::engines::ENGINES
+        .iter()
+        .filter(|d| crate::engines::find(d, &s.engine_path(d.id), data).is_some())
+        .map(|d| d.name)
+        .collect();
+    run(&mut out, "Engines installed", || {
+        if installed.is_empty() {
+            ("fail", "No engine yet. Settings → Engines → Download.".into())
+        } else {
+            ("pass", installed.join(", "))
+        }
+    });
+    let has_ps4 = installed.contains(&"shadPS4") || installed.contains(&"SharpEmu");
+    run(&mut out, "PS4 support", || {
+        if has_ps4 {
+            ("pass", "a PS4 engine is installed".into())
+        } else {
+            ("warn", "no PS4 engine (only needed for PS4 games)".into())
+        }
     });
 
-    run(&mut out, "Engine responds", || match &engine_path {
+    let engine_path = crate::engines::find(crate::engines::def("kyty").unwrap(), &s.engine_path("kyty"), data);
+    run(&mut out, "KytyPS5 responds", || match &engine_path {
         Some(p) => match engine::engine_version(p) {
             Ok(v) => ("pass", v),
             Err(e) => ("fail", e),
         },
-        None => ("warn", "skipped (no engine)".into()),
+        None => ("warn", "skipped (KytyPS5 not installed)".into()),
     });
 
     let sys = gpu::system_info();

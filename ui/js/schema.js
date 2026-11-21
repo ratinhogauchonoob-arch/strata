@@ -24,7 +24,7 @@ export const SECTIONS = [
       { key: "emu.stretch", type: "toggle", label: "Stretch to window", help: "Fill the window instead of keeping the aspect ratio." },
       { key: "emu.hdr", type: "toggle", label: "HDR output", help: "Only for HDR monitors with HDR enabled in Windows." },
       { key: "emu.hide_cursor", type: "toggle", label: "Hide mouse cursor", help: "Hides the cursor after 2 seconds without movement." },
-      { key: "emu.vblank_frequency", type: "number", label: "Virtual refresh rate", min: 30, max: 240, step: 1, suffix: "Hz", tag: "risk", help: "Keep at 60. Other values can make games run too fast or too slow." },
+      { key: "emu.vblank_frequency", type: "refresh", label: "Virtual refresh rate", tag: "risk", help: "Auto matches the monitor Strata is on (144 Hz, 280 Hz…). If a game runs too fast, set this game to 60 Hz." },
       { key: "emu.perf_overlay", type: "toggle", label: "Performance overlay", help: "FPS, frame time and memory in the game window. F2 toggles it." },
     ],
   },
@@ -73,8 +73,8 @@ export const SECTIONS = [
     ],
   },
   {
-    id: "controller", group: "Engine", title: "Controller", perGame: false,
-    lead: "Applies to every game.",
+    id: "controller", group: "Engine", title: "Controller", perGame: true, custom: "controls",
+    lead: "Gamepads work out of the box. Keyboard and mouse keys can be changed here.",
     fields: [
       { key: "emu.keyboard_player", type: "select", label: "Keyboard player", options: [[0, "Shares player 1"], [1, "Player 1"], [2, "Player 2"], [3, "Player 3"], [4, "Player 4"]], help: "Gamepads fill the other players in connection order." },
       { key: "emu.vibration", type: "range", label: "Vibration", min: 0, max: 100, step: 5, suffix: "%", help: "Scales controller rumble." },
@@ -83,7 +83,8 @@ export const SECTIONS = [
     ],
   },
   { id: "library", group: "Launcher", title: "Library", custom: "library", perGame: false, lead: "Folders Strata watches for games. Each game is a folder with eboot.bin inside, or a .zar archive." },
-  { id: "engine", group: "Launcher", title: "Engine", custom: "engine", perGame: false, lead: "Strata runs games through the open-source KytyPS5 engine (GPL-2.0). It is downloaded from its official GitHub releases." },
+  { id: "engine", group: "Launcher", title: "Engines", custom: "engine", perGame: true, lead: "Strata runs games through open-source engines (all GPL-2.0), downloaded from their official GitHub releases. PS5 and PS4 games pick the right engine by themselves." },
+  { id: "backups", group: "Launcher", title: "Saves & backups", custom: "backups", perGame: true, lead: "Copies game saves (and, if you want, shader caches) into one file you can put back later." },
   {
     id: "appearance", group: "Launcher", title: "Appearance", custom: "appearance", perGame: false,
     lead: "Colors, boot animation and motion.",
@@ -111,6 +112,7 @@ export const SECTIONS = [
       { key: "emu.renderdoc", type: "toggle", label: "RenderDoc capture", tag: "debug", help: "Allows frame captures with RenderDoc." },
     ],
   },
+  { id: "gamedev", group: "Launcher", title: "Developer", custom: "gamedev", perGame: "only", devOnly: true, lead: "Logs and details for this game." },
   { id: "about", group: "Launcher", title: "About", custom: "about", perGame: false, lead: "" },
 ];
 

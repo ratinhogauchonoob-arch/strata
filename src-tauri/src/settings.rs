@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const SETTINGS_VERSION: u32 = 1;
+pub const SETTINGS_VERSION: u32 = 2;
 
 /// Engine options. Field names map 1:1 to engine command-line switches (see engine.rs).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -74,7 +74,7 @@ impl Default for EmuSettings {
             stretch: false,
             hdr: false,
             hide_cursor: true,
-            vblank_frequency: 60,
+            vblank_frequency: 0,
             shader_cache: true,
             relaxed_shader_float: false,
             readback_linear: false,
@@ -176,6 +176,54 @@ impl Default for DevSettings {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct EngineSettings {
+    /// Engine ids to try for PS5 games, best first.
+    pub order_ps5: Vec<String>,
+    /// Engine ids to try for PS4 games, best first.
+    pub order_ps4: Vec<String>,
+    /// When an engine fails early, try the next one.
+    pub auto_fallback: bool,
+    /// An engine that closes before this many seconds counts as failed.
+    pub fail_seconds: u32,
+    /// Folder or executable chosen by the user, per engine id.
+    pub paths: BTreeMap<String, String>,
+    /// The user said they do not play PS4 games (setup skipped the PS4 engine).
+    pub skip_ps4: bool,
+}
+
+impl Default for EngineSettings {
+    fn default() -> Self {
+        Self {
+            order_ps5: crate::engines::default_order(crate::engines::Platform::Ps5),
+            order_ps4: crate::engines::default_order(crate::engines::Platform::Ps4),
+            auto_fallback: true,
+            fail_seconds: 20,
+            paths: BTreeMap::new(),
+            skip_ps4: false,
+        }
+    }
+}
+
+/// One keyboard/mouse binding table, shared by every engine that lets Strata write its controls.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ControlSettings {
+    /// Strata writes the engines' control files (otherwise their own defaults stay).
+    pub enabled: bool,
+    /// action -> key name (see controls::KEYS)
+    pub keys: BTreeMap<String, String>,
+    pub swap_cross_circle: bool,
+    pub deadzone: u32,
+}
+
+impl Default for ControlSettings {
+    fn default() -> Self {
+        Self { enabled: false, keys: crate::controls::default_keys(), swap_cross_circle: false, deadzone: 8 }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct GameEntry {
@@ -189,6 +237,11 @@ pub struct GameEntry {
     /// When set, these replace the global engine settings for this game.
     pub emu: Option<EmuSettings>,
     pub perf: Option<PerfSettings>,
+    /// Engine chosen for this game ("" = automatic).
+    pub engine: String,
+    /// Engine that last ran this game past the failure window.
+    pub good_engine: String,
+    pub controls: Option<ControlSettings>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -205,6 +258,8 @@ pub struct Settings {
     pub dev: DevSettings,
     /// Tier name of the last automatic profile, empty if never applied.
     pub auto_profile: String,
+    pub engines: EngineSettings,
+    pub controls: ControlSettings,
     pub games: BTreeMap<String, GameEntry>,
 }
 
@@ -220,6 +275,8 @@ impl Default for Settings {
             perf: PerfSettings::default(),
             dev: DevSettings::default(),
             auto_profile: String::new(),
+            engines: EngineSettings::default(),
+            controls: ControlSettings::default(),
             games: BTreeMap::new(),
         }
     }
@@ -230,6 +287,7 @@ impl Settings {
         match fs::read_to_string(path) {
             Ok(text) => match serde_json::from_str::<Settings>(&text) {
                 Ok(mut s) => {
+                    s.migrate();
                     s.sanitize();
                     s
                 }
@@ -250,6 +308,21 @@ impl Settings {
         fs::rename(&tmp, path)
     }
 
+    /// One-time changes for files written by older versions (runs before sanitize).
+    pub fn migrate(&mut self) {
+        if self.version < 2 {
+            // 0.9 always used 60 Hz; 0.10 matches the monitor instead.
+            if self.emu.vblank_frequency == 60 {
+                self.emu.vblank_frequency = 0;
+            }
+            for g in self.games.values_mut() {
+                if let Some(e) = g.emu.as_mut().filter(|e| e.vblank_frequency == 60) {
+                    e.vblank_frequency = 0;
+                }
+            }
+        }
+    }
+
     /// Clamp values a hand-edited file could break.
     pub fn sanitize(&mut self) {
         self.version = SETTINGS_VERSION;
@@ -266,7 +339,10 @@ impl Settings {
             if !["Silent", "Console", "File"].contains(&e.shader_log.as_str()) {
                 e.shader_log = "Silent".into();
             }
-            e.vblank_frequency = e.vblank_frequency.clamp(24, 240);
+            // 0 = Auto (the refresh rate of the monitor Strata is on).
+            if e.vblank_frequency != 0 {
+                e.vblank_frequency = e.vblank_frequency.clamp(24, 500);
+            }
             e.vibration = e.vibration.min(100);
             e.speaker_volume = e.speaker_volume.min(100);
             e.console_language = e.console_language.clamp(0, 29);
@@ -274,6 +350,24 @@ impl Settings {
             e.trophy_duration = e.trophy_duration.clamp(1, 60);
         };
         fix(&mut self.emu);
+        // Older versions kept one engine path; it belongs to KytyPS5.
+        if !self.engine_path.trim().is_empty() && !self.engines.paths.contains_key("kyty") {
+            self.engines.paths.insert("kyty".into(), self.engine_path.clone());
+        }
+        let known = |v: &mut Vec<String>| {
+            v.retain(|id| crate::engines::def(id).is_some());
+            let mut seen = Vec::new();
+            v.retain(|id| if seen.contains(id) { false } else { seen.push(id.clone()); true });
+        };
+        known(&mut self.engines.order_ps5);
+        known(&mut self.engines.order_ps4);
+        self.engines.fail_seconds = self.engines.fail_seconds.clamp(5, 300);
+        self.engines.paths.retain(|k, v| crate::engines::def(k).is_some() && !v.trim().is_empty());
+        let fixc = |c: &mut ControlSettings| {
+            c.deadzone = c.deadzone.min(90);
+            c.keys.retain(|a, k| crate::controls::is_action(a) && crate::controls::is_key(k));
+        };
+        fixc(&mut self.controls);
         self.perf.ram_limit_gb = self.perf.ram_limit_gb.clamp(2, 256);
         for g in self.games.values_mut() {
             if let Some(e) = g.emu.as_mut() {
@@ -282,12 +376,26 @@ impl Settings {
             if let Some(p) = g.perf.as_mut() {
                 p.ram_limit_gb = p.ram_limit_gb.clamp(2, 256);
             }
+            if let Some(c) = g.controls.as_mut() {
+                fixc(c);
+            }
+            if !g.engine.is_empty() && crate::engines::def(&g.engine).is_none() {
+                g.engine.clear();
+            }
         }
     }
 
     /// Engine settings that apply to one game (its override or the global ones).
     pub fn emu_for(&self, game_id: &str) -> EmuSettings {
         self.games.get(game_id).and_then(|g| g.emu.clone()).unwrap_or_else(|| self.emu.clone())
+    }
+
+    pub fn controls_for(&self, game_id: &str) -> ControlSettings {
+        self.games.get(game_id).and_then(|g| g.controls.clone()).unwrap_or_else(|| self.controls.clone())
+    }
+
+    pub fn engine_path(&self, id: &str) -> String {
+        self.engines.paths.get(id).cloned().unwrap_or_default()
     }
 
     pub fn perf_for(&self, game_id: &str) -> PerfSettings {
@@ -354,6 +462,19 @@ mod tests {
         assert_eq!(s.emu.resolution, "1280x720");
         assert_eq!(s.emu.present_mode, "Mailbox");
         assert_eq!(s.emu.vibration, 100);
+        let mut s = Settings::default();
+        s.emu.vblank_frequency = 0;
+        s.engine_path = "C:/kyty".into();
+        s.engines.order_ps5 = vec!["nope".into(), "kyty".into(), "kyty".into()];
+        s.engines.fail_seconds = 1;
+        s.sanitize();
+        assert_eq!(s.emu.vblank_frequency, 0, "0 means Auto");
+        assert_eq!(s.engines.paths["kyty"], "C:/kyty", "old engine path migrates");
+        assert_eq!(s.engines.order_ps5, ["kyty"]);
+        assert_eq!(s.engines.fail_seconds, 5);
+        s.emu.vblank_frequency = 999;
+        s.sanitize();
+        assert_eq!(s.emu.vblank_frequency, 500);
     }
 
     #[test]

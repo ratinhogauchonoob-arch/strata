@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10.0 Beta — 2026-11-21
+- **Four engines.** PS5: KytyPS5, SharpEmu, AnyPS5. PS4: shadPS4. Each one downloads from its own GitHub releases.
+- **PS4 games** are recognized by their `param.sfo` and start with the PS4 engine automatically. If it is missing, Strata offers the download.
+- **Automatic fallback:** when an engine closes or crashes within the first seconds, the next engine starts; every attempt is logged and the engine that worked is remembered per game. "Try next engine" while a game runs.
+- **Per-game engine** choice (or Automatic), per-game controller keys and a per-game Developer page.
+- **Keyboard and mouse keys** written for shadPS4 and AnyPS5; swap Cross/Circle; stick dead zone.
+- **Save backups** for one game or all games, shader caches optional, with restore.
+- **Virtual refresh rate: Auto** follows the monitor Strata is on (e.g. 144 Hz or 280 Hz). Old 60 Hz settings move to Auto once.
+- Setup now has "Download all" for PS5 engines and an optional PS4 step.
+- Fixed: the Settings tab kept showing a game's settings after opening them (needed Esc).
+- Fixed: folders with an `eboot.bin` but no game info (tools, payloads) showed up as games.
+- Fixed: game settings now mark what differs from the global settings and have "Use global settings again".
+
 ## 0.9.0 Beta — 2026-11-21
 First public beta.
 

@@ -63,11 +63,11 @@ async def main():
             await pg.click("text=Back to global settings"); await pg.wait_for_timeout(300)
             # every settings section
             step("settings sections")
-            for name in ["This PC", "Display", "Rendering", "Performance", "System", "Controller", "Library", "Engine", "Appearance", "Developer", "About"]:
+            for name in ["This PC", "Display", "Rendering", "Performance", "System", "Controller", "Library", "Engines", "Saves & backups", "Appearance", "Developer", "About"]:
                 await pg.click(f'.sections button >> text="{name}"'); await pg.wait_for_timeout(150)
                 for sw in (await pg.locator("#pane .field:not(.disabled) .stepper button").all())[:2]:
                     await sw.click()
-            await pg.click('.sections button >> text=\"Engine\"'); await pg.click("#pane >> text=Update"); await pg.wait_for_timeout(1900)
+            await pg.click('.sections button >> text=\"Engines\"'); await pg.locator("#pane >> text=Update").first.click(); await pg.wait_for_timeout(1700)
             await pg.click('.sections button >> text=\"Appearance\"'); await pg.locator(".sw").nth(2).click(); await pg.click("#pane >> text=Play"); await pg.wait_for_timeout(500); await pg.keyboard.press("Escape"); await pg.wait_for_timeout(700)
             # developer
             step("developer"); await pg.click("#tab-dev"); await pg.wait_for_timeout(300)
@@ -75,6 +75,37 @@ async def main():
             for f in ["info", "warn", "debug"]:
                 await pg.click(f".filters >> text={f}"); await pg.click(f".filters >> text={f}")
             await pg.click("text=Export diagnostics"); await pg.wait_for_timeout(300)
+            # bug fix: the Settings tab always opens the global settings
+            step("settings tab resets game settings")
+            await pg.click("#tab-home"); await pg.wait_for_timeout(300)
+            await pg.keyboard.press("s"); await pg.wait_for_timeout(300)
+            if "game settings" not in (await pg.locator("#view-settings .page-head").inner_text()).lower():
+                problems.append(f"[{vw}x{vh}] S did not open game settings")
+            await pg.click("#tab-settings"); await pg.wait_for_timeout(300)
+            if "game settings" in (await pg.locator("#view-settings .page-head").inner_text()).lower():
+                problems.append(f"[{vw}x{vh}] Settings tab still shows game settings")
+            # controls + backups
+            step("controls/backups")
+            await pg.click('.sections button >> text="Controller"'); await pg.wait_for_timeout(300)
+            await pg.locator("#pane .switch").first.click(); await pg.wait_for_timeout(200)
+            await pg.locator("#pane .keymap select").first.select_option("kp2"); await pg.wait_for_timeout(200)
+            await pg.click('.sections button >> text="Saves & backups"'); await pg.wait_for_timeout(300)
+            await pg.click("#pane >> text=Back up now"); await pg.wait_for_timeout(400)
+            if not await pg.locator("#pane >> text=Restore").count():
+                problems.append(f"[{vw}x{vh}] backup not listed")
+            # PS4 game without a PS4 engine: friendly prompt, download, then it starts
+            step("ps4 prompt")
+            await pg.click("#tab-library"); await pg.wait_for_timeout(300)
+            await pg.locator(".card", has_text="Tidebreaker").click(); await pg.wait_for_timeout(300)
+            await pg.click("#drawer >> text=Play"); await pg.wait_for_timeout(500)
+            if not await pg.locator(".dialog >> text=This is a PS4 game").count() and vw == 1366:
+                problems.append(f"[{vw}x{vh}] no PS4 engine prompt")
+            if await pg.locator(".dialog").count():
+                await pg.click(".dialog .btn.primary"); await pg.wait_for_timeout(2200)
+            if not await pg.locator("#running").is_visible():
+                problems.append(f"[{vw}x{vh}] PS4 game did not start after the download")
+            else:
+                await pg.click("#running >> text=Stop"); await pg.wait_for_timeout(500)
             await pg.screenshot(path=f"/tmp/smoke_{vw}.png")
             await pg.close()
         await b.close()

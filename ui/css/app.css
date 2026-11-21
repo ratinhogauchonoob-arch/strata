@@ -494,3 +494,28 @@ select option { background: var(--panel); }
   .tile.sel .cover { height: 128px; }
   .shelf-head { padding-bottom: 6px; }
 }
+
+/* ───── 0.10: engines, platforms, controls, backups ───── */
+.plat { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line-2); color: var(--fg-2); margin-left: 8px; vertical-align: middle; }
+.plat.ps4 { color: var(--a2); border-color: color-mix(in srgb, var(--a2) 55%, transparent); background: var(--a2-soft); }
+.plat.corner { position: absolute; left: 32px; top: 6px; margin: 0; padding: 1px 5px; background: rgba(8, 9, 11, 0.8); }
+.tile .own { position: absolute; right: 9px; bottom: 9px; width: 8px; height: 8px; border-radius: 2px; background: var(--a2); box-shadow: 0 0 0 2px rgba(8, 9, 11, 0.7); }
+.field .name .diff { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--a1); margin-right: 8px; vertical-align: middle; }
+.sections .back { color: var(--a1); margin-bottom: 10px; border: 1px solid var(--line-2); }
+.sections .back:hover { color: var(--fg); }
+h4.sub { margin: 30px 0 6px; font-size: 13px; font-weight: 600; color: var(--fg-2); letter-spacing: 0.02em; }
+.engine-card .name { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.ctl.order { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line-2); font-size: 13px; }
+.pill.off { opacity: 0.5; }
+.pill button { background: none; border: 0; color: var(--fg-2); cursor: pointer; font-size: 15px; padding: 0 2px; border-radius: 4px; }
+.pill button:hover, .pill button:focus-visible { color: var(--fg); background: var(--raise); }
+.keymap { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 18px; margin-top: 10px; }
+.keymap label { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--fg-2); }
+.keymap .select select { min-width: 120px; }
+.keymap.disabled { opacity: 0.45; pointer-events: none; }
+.running .eng { color: var(--fg-2); text-transform: none; letter-spacing: 0; }
+.modal.dialog { z-index: 80; }
+.modal .sheet.small { max-width: 460px; }
+.modal .sheet.small h2 { font-size: 22px; margin: 0 0 10px; }
+.modal .sheet.small p { color: var(--fg-2); margin: 0 0 22px; line-height: 1.5; }
