@@ -14,4 +14,4 @@ Thanks for helping! Strata is in beta, so the priority is **fixing bugs before a
 - The engine is driven only through its command line; `engine.rs::build_args` mirrors the official KytyPS5 launcher.
 
 ## Reporting bugs
-Use the website form (http://strata.test/report) or the GitHub issue template, with the diagnostics file from *Developer → Export diagnostics*.
+Use the website form (https://strata.gbxstudios.com/report) or the GitHub issue template, with the diagnostics file from *Developer → Export diagnostics*.

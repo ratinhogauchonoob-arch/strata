@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <b>Website:</b> <a href="http://strata.test">strata.test</a> <i>(home test server — public address coming soon)</i> ·
+  <b>Website:</b> <a href="https://strata.gbxstudios.com">strata.gbxstudios.com</a> ·
   <a href="../../releases">Download</a> ·
-  <a href="http://strata.test/guide">Guide</a> ·
-  <a href="http://strata.test/report">Report a bug</a>
+  <a href="https://strata.gbxstudios.com/guide">Guide</a> ·
+  <a href="https://strata.gbxstudios.com/report">Report a bug</a>
 </p>
 
 <p align="center">
@@ -59,7 +59,7 @@
 
 **Requirements:** Windows 10 (1803+) or 11, 64-bit · x86-64 CPU with AVX2 · Vulkan 1.3 GPU with a current driver · 16 GB RAM recommended.
 
-Full guide — every setting explained, memory limit, per-game settings, troubleshooting and exit codes: **[strata.test/guide](http://strata.test/guide)**.
+Full guide — every setting explained, memory limit, per-game settings, troubleshooting and exit codes: **[strata.gbxstudios.com/guide](https://strata.gbxstudios.com/guide)**.
 
 ### Game folders
 
@@ -114,7 +114,7 @@ tests/          UI smoke test
 
 ## Reporting bugs
 
-Use the **[report form on the website](http://strata.test/report)** or open an issue here. Turn on *Settings → Developer*, reproduce the problem, then attach the file from *Developer → Export diagnostics*.
+Use the **[report form on the website](https://strata.gbxstudios.com/report)** or open an issue here. Turn on *Settings → Developer*, reproduce the problem, then attach the file from *Developer → Export diagnostics*.
 
 ## Credits & license
 

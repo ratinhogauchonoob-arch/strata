@@ -1,10 +1,10 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report on the website
-    url: http://strata.test/report
+    url: https://strata.gbxstudios.com/report
     about: The quickest way — the form accepts the diagnostics file directly.
   - name: Guide & troubleshooting
-    url: http://strata.test/guide
+    url: https://strata.gbxstudios.com/guide
     about: Every setting explained, plus common exit codes and fixes.
   - name: A game does not run
     url: https://github.com/KytyPS5/KytyPS5
