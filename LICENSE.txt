@@ -1,0 +1,13 @@
+Strata launcher
+Copyright (C) 2026 Strata contributors
+
+This program is free software; you can redistribute it and/or modify it under the terms of
+the GNU General Public License version 2 as published by the Free Software Foundation.
+Full text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+Strata starts games through the KytyPS5 engine (https://github.com/KytyPS5/KytyPS5),
+GPL-2.0, which is downloaded separately from its official releases. KytyPS5 is based on
+Kyty (MIT). Fonts: Archivo and IBM Plex Mono, SIL Open Font License 1.1 (see ui/fonts).
+
+Strata is not affiliated with, endorsed by or connected to any console manufacturer.
+It contains no games, firmware, BIOS or keys. Use only games you dumped from hardware you own.

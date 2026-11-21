@@ -1,0 +1,31 @@
+[package]
+name = "strata"
+version = "0.1.0"
+description = "Strata - game launcher frontend"
+edition = "2021"
+license = "GPL-2.0-only"
+
+[lib]
+name = "strata_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ash = { version = "0.38", default-features = false, features = ["loaded", "debug", "std"] }
+sysinfo = { version = "0.37", default-features = false, features = ["system", "disk"] }
+ureq = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+base64 = "0.22"
+time = { version = "0.3", features = ["local-offset", "formatting", "macros"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

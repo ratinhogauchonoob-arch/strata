@@ -1,0 +1,6 @@
+src-tauri/target/
+src-tauri/gen/
+node_modules/
+data/
+*.log
+Strata-pronto/

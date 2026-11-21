@@ -1,0 +1,48 @@
+STRATA - launcher novo (UI propria) usando o motor KytyPS5
+=========================================================
+
+O QUE E
+  App novo, todo em ingles, feito com Tauri 2:
+    - Rust  (src-tauri/)  -> fala com o Windows: GPU, RAM, jogos, motor, logs
+    - HTML/CSS/JS (ui/)   -> a interface (sem framework, sem npm para rodar)
+  O motor que roda os jogos e o KytyPS5 (GPL-2.0). O Strata baixa ele sozinho
+  do GitHub oficial (Settings -> Engine -> Download) ou usa o que voce ja tem.
+
+COMO COMPILAR (sem gastar espaco no PC)
+  1. Clique em  compilar_na_nuvem.bat
+     - cria o repositorio PRIVADO "strata" na sua conta do GitHub
+     - o GitHub compila (10-20 min) e baixa o resultado em  Strata-pronto\
+  2. Abra  Strata-pronto\Strata\Strata.exe   (portatil: cria a pasta "data" ao lado)
+     ou instale com o  Strata_..._x64-setup.exe
+
+  Repo privado: o GitHub da 2000 min gratis por mes; cada build gasta ~30 min.
+
+PRIMEIRA VEZ
+  O assistente de boas-vindas faz 3 coisas:
+    1. Detecta seu PC e aplica as configs certas
+         RTX 4050 -> High 1080p      RTX 3050 -> Balanced 720p
+         GPU desconhecida -> decide pela memoria de video
+         CPU Intel -> liga "CPU compatibility mode" sozinho
+    2. Baixa o motor KytyPS5 (ou aponte o que ja tem: Settings -> Engine -> Choose folder,
+       por exemplo E:\LK5-pronto)
+    3. Pasta de jogos: data\Games ja e criada. Pode adicionar E:\PS5Games tambem.
+
+O QUE TEM
+  - Home estilo console (fundo do jogo, prateleira, Play), Library (grade/lista,
+    busca, favoritos, status), detalhes do jogo, settings por jogo.
+  - Cada opcao tem etiqueta: + FPS / - FPS / Fix / Experimental / Debug.
+  - Performance -> limite de RAM com [-] 12 GB [+]:
+       Soft  = segura a RAM fisica no limite, o resto vai pro arquivo de paginacao
+       Strict = fecha o jogo se passar do limite
+  - Appearance -> Accent 1 e Accent 2 (5 cores), boot Duo (2 cores) ou Spectrum (6 cores).
+  - Developer mode (Settings -> Developer): aba com logs ao vivo, filtros,
+    self-test (12 checagens), exportar diagnostico, linha de comando do motor.
+    Logs ficam em data\logs (um arquivo por sessao de jogo).
+  - Controle (Gamepad), teclado e mouse. Q/E ou LB/RB trocam de aba. F11 tela cheia.
+
+TESTES
+  cargo test --lib (24 testes) roda no GitHub antes de compilar.
+
+LICENCA
+  GPL-2.0 (LICENSE.txt). Sem afiliacao com fabricante de console.
+  Sem jogos, firmware ou chaves. Use so jogos seus.
