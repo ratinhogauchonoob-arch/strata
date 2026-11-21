@@ -1,4 +1,4 @@
-STRATA - launcher novo (UI propria) usando o motor KytyPS5
+STRATA 0.9.0 BETA - launcher novo (UI propria) usando o motor KytyPS5
 =========================================================
 
 O QUE E
@@ -49,7 +49,11 @@ ARTE DOS JOGOS
   Para .zar: ao lado do arquivo -> Jogo.png, Jogo.logo.png, Jogo.background.png
 
 TESTES
-  cargo test --lib (25 testes) - rodar no Linux; no Windows o teste do Tauri nao abre sem manifest.
+  Backend:  cd src-tauri && cargo test --lib        (25 testes)
+  UI:       sirva a pasta ui\ e rode  python tests\ui_smoke.py
+            (abre a UI em 3 tamanhos de tela, clica em tudo e falha em qualquer erro)
+
+ANTIGO -   cargo test --lib (25 testes) - rodar no Linux; no Windows o teste do Tauri nao abre sem manifest.
 
 LICENCA
   GPL-2.0 (LICENSE.txt). Sem afiliacao com fabricante de console.

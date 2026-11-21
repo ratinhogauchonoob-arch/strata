@@ -63,6 +63,19 @@ const VIEWS = ["home", "library", "settings", "dev"];
 const visibleViews = () => VIEWS.filter((v) => v !== "dev" || S.settings?.dev.enabled);
 
 // ───────────────────────── helpers ─────────────────────────
+// Re-rendering replaces elements; put focus back on the control at the same position.
+function keepFocus(container, render) {
+  const box = typeof container === "string" ? $(container) : container;
+  const had = box && box.contains(document.activeElement) && document.activeElement.matches("[data-nav]");
+  const idx = had ? [...box.querySelectorAll("[data-nav]")].indexOf(document.activeElement) : -1;
+  render();
+  if (idx >= 0) {
+    const now = typeof container === "string" ? $(container) : container;
+    const list = now ? [...now.querySelectorAll("[data-nav]")] : [];
+    const el = list[Math.min(idx, list.length - 1)];
+    if (el) nav.focus(el, { silent: true });
+  }
+}
 const get = (obj, path) => path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
 function set(obj, path, val) {
   const ks = path.split(".");
@@ -70,8 +83,8 @@ function set(obj, path, val) {
   for (const k of ks.slice(0, -1)) o = o[k];
   o[ks.at(-1)] = val;
 }
-const fmtTime = (secs) => {
-  if (!secs) return "Never played";
+const fmtTime = (secs, launches = 0) => {
+  if (!secs) return launches ? "Under a minute" : "Never played";
   const hrs = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
   return hrs ? `${hrs} h ${m} min` : m ? `${m} min` : `${secs} s`;
 };
@@ -85,7 +98,7 @@ const fmtAgo = (sec) => {
   return Math.round(d / 86400) + " days ago";
 };
 const entry = (id) => S.settings.games[id] || (S.settings.games[id] = { favorite: false, last_played: null, play_seconds: 0, launches: 0, status: "unknown", note: "", emu: null, perf: null });
-const initials = (t) => t.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+const initials = (t) => (t.match(/[\p{L}\p{N}]+/gu) || ["?"]).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 const STATUS = { unknown: "Untested", boots: "Boots", menus: "Menus", playable: "Playable", broken: "Broken" };
 
 function log(level, msg) { invoke("ui_log", { level, msg }).catch(() => {}); }
@@ -130,7 +143,8 @@ function renderTop() {
   const bar = $("#topbar");
   bar.replaceChildren();
   const brand = h("div", { class: "brand", "data-tauri-drag-region": true },
-    h("span", { html: MARK() }), h("span", { class: "word", "data-tauri-drag-region": true }, "STRATA"));
+    h("span", { html: MARK() }), h("span", { class: "word", "data-tauri-drag-region": true }, "STRATA"),
+    S.boot.channel ? h("span", { class: "beta" }, S.boot.channel) : null);
   const tabs = h("nav", { class: "tabs" }, visibleViews().map((v, i) =>
     h("button", { class: "tab" + (S.view === v ? " active" : ""), "data-nav": true, id: "tab-" + v, onclick: () => go(v) },
       { home: "Home", library: "Library", settings: "Settings", dev: "Developer" }[v])));
@@ -140,7 +154,7 @@ function renderTop() {
     "data-nav": true,
     title: "Hardware profile",
     onclick: () => { S.section = "profile"; S.perGame = null; go("settings"); },
-  }, h("span", { class: "dot" }), gpu ? (gpu.gpu_name ? shortGpu(gpu.gpu_name) + " · " : "") + gpu.label : "Checking PC…");
+  }, h("span", { class: "dot" }), gpu ? (gpu.gpu_name ? shortGpu(gpu.gpu_name) + " · " : "") + gpu.label : S.loaded ? "Hardware unknown" : "Checking PC…");
   const status = h("div", { class: "status", "data-tauri-drag-region": true },
     chip,
     nav.pad.connected ? h("span", { class: "chip", title: nav.pad.name }, h("span", { class: "dot", style: { background: "var(--a2)" } }), "Controller") : null,
@@ -227,9 +241,9 @@ function renderHome() {
     h("div", { class: "eyebrow" },
       h("span", { class: "micro idx" }, String(S.sel + 1).padStart(2, "0") + " / " + String(games.length).padStart(2, "0")),
       h("span", { class: "micro" }, g.archive ? "Archive" : g.title_id || "Folder")),
-    g.logo ? h("img", { class: "logo", src: fileSrc(g.logo), alt: g.title }) : h("h1", {}, g.title),
+    g.logo ? h("img", { class: "logo", src: fileSrc(g.logo), alt: g.title }) : h("h1", { class: g.title.length > 22 ? "long" : "" }, g.title),
     h("div", { class: "meta" },
-      h("span", {}, "Played ", h("b", {}, fmtTime(e.play_seconds))),
+      h("span", {}, "Played ", h("b", {}, fmtTime(e.play_seconds, e.launches))),
       h("span", {}, "Last ", h("b", {}, fmtAgo(e.last_played))),
       g.version ? h("span", {}, "Version ", h("b", {}, g.version)) : null,
       h("span", {}, "Status ", h("b", {}, STATUS[e.status] || "Untested")),
@@ -338,7 +352,7 @@ function renderLibraryBody(list = filteredGames()) {
         return h("button", { class: "row", "data-nav": true, onclick: () => openDrawer(g.id), "data-id": g.id },
           g.icon ? h("img", { src: fileSrc(g.icon), alt: "" }) : h("span", { class: "ph" }, initials(g.title)),
           h("span", { class: "t" }, g.title), h("span", { class: "mono" }, g.title_id || "—"), h("span", { class: "mono" }, g.version || "—"),
-          h("span", {}, fmtTime(e.play_seconds)), h("span", {}, STATUS[e.status] || "Untested"));
+          h("span", {}, fmtTime(e.play_seconds, e.launches)), h("span", {}, STATUS[e.status] || "Untested"));
       })));
   }
 }
@@ -380,7 +394,7 @@ function openDrawer(id) {
       h("div", { class: "facts" },
         h("div", {}, h("div", { class: "micro" }, "Version"), h("div", { class: "v" }, g.version || "—")),
         h("div", {}, h("div", { class: "micro" }, "Needs firmware"), h("div", { class: "v" }, g.firmware || "—")),
-        h("div", {}, h("div", { class: "micro" }, "Time played"), h("div", { class: "v" }, fmtTime(e.play_seconds))),
+        h("div", {}, h("div", { class: "micro" }, "Time played"), h("div", { class: "v" }, fmtTime(e.play_seconds, e.launches))),
         h("div", {}, h("div", { class: "micro" }, "Launches"), h("div", { class: "v" }, String(e.launches || 0))),
         h("div", {}, h("div", { class: "micro" }, "Size"), sizeEl),
         h("div", {}, h("div", { class: "micro" }, "Last played"), h("div", { class: "v" }, fmtAgo(e.last_played))),
@@ -443,8 +457,11 @@ function renderSettings() {
 }
 
 function renderPane() {
+  if (!$("#pane") || S.view !== "settings") return;
+  keepFocus("#view-settings .page", renderPaneInner);
+}
+function renderPaneInner() {
   const pane = $("#pane");
-  if (!pane || S.view !== "settings") return;
   const sec = SECTIONS.find((s) => s.id === S.section);
   pane.replaceChildren(h("h3", {}, sec.title), sec.lead ? h("p", { class: "lead" }, sec.lead) : null);
 
@@ -487,6 +504,8 @@ function field(f, target, locked) {
   const write = (v) => {
     if (S.perGame && (f.key.startsWith("emu.") || f.key.startsWith("perf."))) {
       const e = entry(S.perGame);
+      if (!e.emu) return; // following global settings: nothing to change here
+      if (!e.perf) e.perf = structuredClone(S.settings.perf);
       set({ emu: e.emu, perf: e.perf }, f.key, v);
     } else set(S.settings, f.key, v);
     if (f.key.startsWith("ui.")) applyTheme();
@@ -561,7 +580,11 @@ function field(f, target, locked) {
 
 function paneProfile(pane) {
   const p = S.profile, sys = S.sys;
-  if (!p || !sys) { pane.append(h("p", { class: "lead" }, "Reading hardware…")); return; }
+  if (!p || !sys) {
+    pane.append(h("div", { class: "banner" }, S.loaded ? "Could not read the hardware. Check Developer → Logs." : "Reading hardware…",
+      h("button", { class: "btn small", "data-nav": true, onclick: async () => { S.sys = await invoke("system_info", { refresh: true }).catch(() => null); S.profile = await invoke("auto_profile").catch(() => null); renderPane(); renderTop(); } }, "Try again")));
+    return;
+  }
   const gpu = sys.gpus.find((g) => g.name === p.gpu_name);
   pane.append(h("div", { class: "pcard" },
     h("div", { class: "micro" }, "Recommended for this PC"),
@@ -599,7 +622,12 @@ function paneRam(pane) {
   const total = Math.max(4, Math.round((S.sys?.ram_mb || 16384) / 1024));
   const pct = Math.min(100, (perf.ram_limit_gb / total) * 100);
   const writePerf = (k, v) => {
-    if (S.perGame) entry(S.perGame).perf[k] = v; else S.settings.perf[k] = v;
+    if (S.perGame) {
+      const e = entry(S.perGame);
+      if (!e.emu) return;
+      if (!e.perf) e.perf = structuredClone(S.settings.perf);
+      e.perf[k] = v;
+    } else S.settings.perf[k] = v;
     save(); renderPane();
   };
   const step = (d) => writePerf("ram_limit_gb", Math.max(2, Math.min(total, perf.ram_limit_gb + d)));
@@ -730,12 +758,13 @@ function paneAbout(pane) {
   pane.append(
     h("div", { class: "pcard" },
       h("div", { style: { display: "flex", gap: "18px", alignItems: "center" } }, h("span", { html: MARK(), style: { width: "54px", height: "54px", display: "block" } }),
-        h("div", {}, h("div", { class: "tier", style: { margin: 0 } }, "Strata"), h("div", { class: "micro" }, `Version ${S.boot.version} · ${S.boot.platform}`))),
+        h("div", {}, h("div", { class: "tier", style: { margin: 0 } }, "Strata"), h("div", { class: "micro" }, `Version ${S.boot.version}${S.boot.channel ? " " + S.boot.channel : ""} · ${S.boot.platform}`))),
       h("ul", { style: { marginTop: "20px" } },
         h("li", {}, "Game engine: KytyPS5 — GPL-2.0, by its contributors (github.com/KytyPS5/KytyPS5). Based on Kyty (MIT)."),
         h("li", {}, "Strata launcher — GPL-2.0. Fonts: Archivo and IBM Plex Mono (SIL Open Font License)."),
         h("li", {}, "Strata is not affiliated with, endorsed by or connected to any console maker. It ships no games, firmware or keys."),
-        h("li", {}, "Only play games you dumped yourself from hardware you own.")),
+        h("li", {}, "Only play games you dumped yourself from hardware you own."),
+        S.boot.channel ? h("li", {}, "This is a beta: expect rough edges. Developer → Export diagnostics creates a report you can share.") : null),
       h("div", { style: { display: "flex", gap: "10px" } },
         h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.data }); } }, "Open data folder"),
         h("button", { class: "btn small", "data-nav": true, onclick: () => { S.settings.first_run = true; save(); renderWizard(true); } }, "Run setup again"))));
@@ -837,7 +866,9 @@ async function launch(id) {
     return;
   }
   try {
-    S.running = await invoke("launch_game", { id });
+    const info = await invoke("launch_game", { id });
+    // the game may already have exited (instant crash) before this resolved
+    S.running = (await invoke("running_game")) ? info : null;
     const e = entry(id);
     e.launches = (e.launches || 0) + 1;
     e.last_played = Math.floor(Date.now() / 1000);
@@ -890,8 +921,17 @@ function renderWizard(force = false) {
       step(1, !!S.settings.auto_profile, p ? `Your PC: ${p.label}` : "Checking your PC…",
         !p ? "" : p.tier === "unsupported" ? (p.reasons[0] || "Update your graphics driver.") : `${p.gpu_name ? shortGpu(p.gpu_name) + " · " : ""}${Math.round((S.sys?.ram_mb || 0) / 1024)} GB RAM — tuned settings ready.`,
         h("button", { class: "btn small", "data-nav": true, disabled: !p || p.tier === "unsupported", onclick: async () => { await applyProfile(); renderWizard(true); } }, S.settings.auto_profile ? "Applied" : "Apply")),
-      step(2, !!S.engine.path, "Game engine", S.engine.path ? (S.engine.version || "Installed") : dl ? `${dl.stage}${dl.total ? ` · ${Math.round((dl.received / dl.total) * 100)}%` : ""}` : "Download the open-source KytyPS5 engine (official GitHub release).",
-        S.engine.path ? h("span", { class: "micro" }, "Ready") : h("button", { class: "btn small", "data-nav": true, disabled: dl && dl.stage !== "error" && dl.stage !== "done", onclick: downloadEngine }, "Download")),
+      step(2, !!S.engine.path, "Game engine",
+        S.engine.path ? (S.engine.version || "Installed")
+          : dl && dl.stage === "error" ? "Download failed. Check your internet connection, or choose an engine folder you already have."
+          : dl ? `${dl.stage}${dl.total ? ` · ${Math.round((dl.received / dl.total) * 100)}%` : ""}`
+          : "Download the open-source KytyPS5 engine (official GitHub release), or choose a folder you already have.",
+        S.engine.path ? h("span", { class: "micro" }, "Ready") : h("div", { style: { display: "flex", gap: "8px" } },
+          h("button", { class: "btn small", "data-nav": true, disabled: dl && dl.stage !== "error" && dl.stage !== "done", onclick: downloadEngine }, "Download"),
+          h("button", { class: "btn small", "data-nav": true, onclick: async () => {
+            const p = await invoke("pick_folder");
+            if (p) { S.settings.engine_path = p; await save(true); await loadEngine(); renderWizard(true); renderTop(); if (!S.engine.path) toast("No kyty_emulator found in that folder.", "warn"); }
+          } }, "Choose folder"))),
       step(3, S.games.length > 0, "Your games", S.games.length ? `${S.games.length} found.` : "Put game folders in the Games folder, or add your own folder.",
         h("div", { style: { display: "flex", gap: "8px" } },
           h("button", { class: "btn small", "data-nav": true, onclick: () => invoke("open_path", { path: S.boot.games_dir }) }, "Open"),
@@ -939,6 +979,9 @@ nav.on("action", (e) => {
     else if (k === "s") openGameSettings(g.id);
   } else if (S.view === "library" && k === "/") {
     e.preventDefault?.(); $("#search")?.focus();
+  } else if (S.view === "library" && (k === "f" || k === "pad-x") && !drawerFor) {
+    const id = document.activeElement?.dataset?.id;
+    if (id) { toggleFav(id); toast(entry(id).favorite ? "Added to favorites." : "Removed from favorites.", "ok"); }
   } else if (S.view === "dev") {
     if (k === "t") runTests();
     if (k === "c") { invoke("clear_logs"); logBuf.length = 0; redrawLog(); }
@@ -956,7 +999,7 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
   S.running = S.boot.running;
   applyTheme();
   const u = S.settings.ui;
-  const bootDone = playBoot({ style: u.boot_style, accent1: u.accent1, accent2: u.accent2, version: S.boot.version, reduceMotion: u.reduce_motion });
+  const bootDone = playBoot({ style: u.boot_style, accent1: u.accent1, accent2: u.accent2, version: S.boot.version + (S.boot.channel ? " " + S.boot.channel : ""), reduceMotion: u.reduce_motion });
 
   // load everything while the boot plays
   listen("log", appendLog);
@@ -982,6 +1025,7 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
   ]);
   S.games = games;
   S.profile = await invoke("auto_profile").catch(() => null);
+  S.loaded = true;
   log("info", `UI ready · ${S.games.length} games · engine ${S.engine.path ? "found" : "missing"}`);
   await bootDone;
   renderRunning();

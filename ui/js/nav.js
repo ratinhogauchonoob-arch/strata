@@ -37,7 +37,7 @@ function visible(el) {
   if (st.visibility === "hidden") return false;
   let p = el;
   while (p) {
-    if (p.classList && (p.classList.contains("hidden"))) return false;
+    if (p.classList && (p.classList.contains("hidden") || p.classList.contains("disabled"))) return false;
     if (p.classList && p.classList.contains("view") && !p.classList.contains("active")) return false;
     p = p.parentElement;
   }
@@ -68,7 +68,9 @@ export function move(dir) {
   const list = candidates();
   const cur = current();
   if (!cur || !list.includes(cur)) {
-    focus(list[0]);
+    // nothing focused (e.g. after a re-render): start inside the open view, not the top bar
+    const inView = list.find((el) => el.closest(".view.active, .drawer.show, .modal.show"));
+    focus(inView || list[0]);
     return;
   }
   // Rows of a shelf/grid: prefer the element explicitly marked as the next one.

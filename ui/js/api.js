@@ -122,7 +122,7 @@ async function mock(cmd, a) {
   }
   switch (cmd) {
     case "bootstrap":
-      return { app: "Strata", version: "0.1.0", platform: "web", data_dir: "C:/Strata/data", games_dir: "C:/Strata/data/Games", settings: structuredClone(mset), engine: "C:/Strata/data/engine/KytyPS5-Windows-x64/kyty_emulator.exe", running: mrun };
+      return { app: "Strata", version: "0.9.0", channel: "beta", platform: "web", data_dir: "C:/Strata/data", games_dir: "C:/Strata/data/Games", settings: structuredClone(mset), engine: "C:/Strata/data/engine/KytyPS5-Windows-x64/kyty_emulator.exe", running: mrun };
     case "save_settings": mset = structuredClone(a.settings); mlog("debug", "settings", "saved"); return structuredClone(mset);
     case "system_info": return demoSys;
     case "auto_profile": return demoProfile;

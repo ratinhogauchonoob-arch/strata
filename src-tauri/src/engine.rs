@@ -69,6 +69,16 @@ pub fn engine_version(engine: &Path) -> Result<String, String> {
     }
     hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("cannot start engine: {e}"))?;
+    // Read while it runs so a long --help can never fill the pipe and stall the process.
+    let reader = child.stdout.take().map(|out| {
+        std::thread::spawn(move || {
+            let mut first = String::new();
+            let mut r = BufReader::new(out);
+            let _ = r.read_line(&mut first);
+            let _ = std::io::copy(&mut r, &mut std::io::sink());
+            first
+        })
+    });
     let start = Instant::now();
     loop {
         match child.try_wait() {
@@ -81,10 +91,7 @@ pub fn engine_version(engine: &Path) -> Result<String, String> {
             Err(e) => return Err(e.to_string()),
         }
     }
-    let mut first = String::new();
-    if let Some(out) = child.stdout.take() {
-        let _ = BufReader::new(out).read_line(&mut first);
-    }
+    let first = reader.and_then(|h| h.join().ok()).unwrap_or_default();
     let first = first.trim().to_string();
     if first.is_empty() {
         Err("engine printed nothing".into())

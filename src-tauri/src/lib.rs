@@ -18,6 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub const APP_NAME: &str = "Strata";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const APP_CHANNEL: &str = "beta";
 
 pub struct AppState {
     pub data: PathBuf,
@@ -43,6 +44,7 @@ impl AppState {
 struct Bootstrap {
     app: &'static str,
     version: &'static str,
+    channel: &'static str,
     platform: &'static str,
     data_dir: String,
     games_dir: String,
@@ -65,6 +67,7 @@ fn bootstrap(state: State<AppState>) -> Bootstrap {
     Bootstrap {
         app: APP_NAME,
         version: APP_VERSION,
+        channel: APP_CHANNEL,
         platform: std::env::consts::OS,
         data_dir: state.data.to_string_lossy().into_owned(),
         games_dir: gd,
@@ -163,7 +166,8 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 #[tauri::command]
 async fn pick_file(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
-    app.dialog().file().add_filter("Engine", &["exe", ""]).blocking_pick_file().map(|p| p.to_string())
+    let exts: &[&str] = if cfg!(windows) { &["exe"] } else { &[""] };
+    app.dialog().file().add_filter("Engine", exts).blocking_pick_file().map(|p| p.to_string())
 }
 
 #[tauri::command]
@@ -208,6 +212,22 @@ fn launch_game(app: AppHandle, state: State<AppState>, id: String) -> Result<eng
             .ok_or("Engine not found. Open Settings → Engine to download it or choose its folder.")?;
         (e, s.emu_for(&id), s.perf_for(&id), s.dev.clone())
     };
+    // "Automatic" on a PC with two GPUs: the engine may pick the integrated one, so pin the best one.
+    let mut emu = emu;
+    if emu.gpu_index < 0 {
+        let cached = state.sys.lock().unwrap().clone();
+        let sys = cached.unwrap_or_else(|| {
+            let s = gpu::system_info();
+            *state.sys.lock().unwrap() = Some(s.clone());
+            s
+        });
+        if sys.gpus.len() > 1 {
+            if let Some(best) = gpu::best_gpu(&sys.gpus) {
+                emu.gpu_index = best.index;
+                logs::info("engine", &format!("Automatic GPU: using #{} {}", best.index, best.name));
+            }
+        }
+    }
     let target = engine::game_target(&game.path, game.archive);
 
     let settings = state.settings.clone();
@@ -228,7 +248,13 @@ fn launch_game(app: AppHandle, state: State<AppState>, id: String) -> Result<eng
             let _ = s.save(&data.join("settings.json"));
             logs::prune_sessions(&data, s.dev.keep_sessions.max(1) as usize);
         }
-        *running.lock().unwrap() = None;
+        {
+            // Only clear the slot if it still belongs to this game (a new one may have started).
+            let mut slot = running.lock().unwrap();
+            if slot.as_ref().is_some_and(|r| r.info.game_id == x.game_id) {
+                *slot = None;
+            }
+        }
         let _ = app2.emit("game-exit", GameExit { game_id: x.game_id, code: x.code, seconds: x.seconds, message });
         if let Some(w) = app2.get_webview_window("main") {
             let _ = w.unminimize();
@@ -257,8 +283,11 @@ fn launch_game(app: AppHandle, state: State<AppState>, id: String) -> Result<eng
         entry.last_played = Some((info.started_ms / 1000) as i64);
         let _ = state.save(&s);
     }
-    *state.running.lock().unwrap() = Some(r);
-    let _ = app.emit("game-start", &info);
+    let exited_already = r.child.lock().unwrap().try_wait().ok().flatten().is_some();
+    if !exited_already {
+        *state.running.lock().unwrap() = Some(r);
+        let _ = app.emit("game-start", &info);
+    }
     Ok(info)
 }
 
@@ -401,7 +430,7 @@ pub fn run() {
     let _ = std::fs::create_dir_all(&data);
     let settings = Settings::load(&data.join("settings.json"));
     logs::init(&data, None, &settings.dev.log_level);
-    logs::info("app", &format!("{APP_NAME} {APP_VERSION} starting · data: {}", data.display()));
+    logs::info("app", &format!("{APP_NAME} {APP_VERSION} {APP_CHANNEL} starting · data: {}", data.display()));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
