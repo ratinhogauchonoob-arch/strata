@@ -106,7 +106,7 @@ The app is a Tauri 2 project: Rust backend in `src-tauri/`, plain HTML/CSS/JS fr
 
 ```bash
 # requirements: Rust (stable), Node 18+, and on Windows the MSVC build tools + WebView2
-cd src-tauri && cargo test --lib       # 44 unit tests
+cd src-tauri && cargo test --lib       # 46 unit tests
 cd .. && npx @tauri-apps/cli@^2 build  # app + NSIS installer in src-tauri/target/release
 ```
 

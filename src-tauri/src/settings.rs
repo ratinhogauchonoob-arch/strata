@@ -262,6 +262,8 @@ pub struct Settings {
     pub auto_profile: String,
     pub engines: EngineSettings,
     pub controls: ControlSettings,
+    /// Where "Install .pkg" puts games ("" = automatic: a library folder on another drive first).
+    pub pkg_install_folder: String,
     pub games: BTreeMap<String, GameEntry>,
 }
 
@@ -279,6 +281,7 @@ impl Default for Settings {
             auto_profile: String::new(),
             engines: EngineSettings::default(),
             controls: ControlSettings::default(),
+            pkg_install_folder: String::new(),
             games: BTreeMap::new(),
         }
     }

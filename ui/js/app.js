@@ -462,20 +462,34 @@ async function installPkg(path, overwrite = false) {
   if (!path) path = await invoke("pick_pkg");
   if (!path) return;
   let plan;
-  try { plan = await invoke("pkg_inspect", { path, folder: null }); } catch (e) { return toast(String(e), "err"); }
-  const i = plan.info;
-  const where = i.kind === "update" ? (plan.game_found ? "next to the installed game (as an update)" : "in your games folder (the game itself is not installed yet)")
-    : i.kind === "dlc" ? "in the PS4 engine's DLC folder" : "in your games folder";
-  if (!overwrite) {
-    const ok = await ask(`Install ${i.kind_name}: ${i.title_id}?`,
+  let folder = null;
+  for (;;) {
+    try { plan = await invoke("pkg_inspect", { path, folder }); } catch (e) { return toast(String(e), "err"); }
+    if (overwrite) break;
+    const i = plan.info;
+    const where = i.kind === "update" ? (plan.game_found ? "next to the installed game (as an update)" : "in your games folder (the game itself is not installed yet)")
+      : i.kind === "dlc" ? "in the PS4 engine's DLC folder" : "in your games folder";
+    const answer = await ask(`Install ${i.kind_name}: ${i.title_id}?`,
       `${i.content_id} · ${fmtSize(i.size_mb)}. It goes ${where}:\n${plan.destination}${plan.exists ? "\n\nIt is already installed and will be replaced." : ""}`,
-      plan.exists ? "Replace" : "Install");
-    if (!ok) return;
+      plan.exists ? "Replace" : "Install", "Cancel", i.kind === "game" ? "Change folder" : null);
+    if (answer === "extra") {
+      const p = await invoke("pick_folder");
+      if (p) {
+        folder = p;
+        S.settings.pkg_install_folder = p;
+        if (!S.settings.library_folders.includes(p)) S.settings.library_folders.push(p);
+        await save(true);
+      }
+      continue;
+    }
+    if (!answer) return;
+    break;
   }
+  const i = plan.info;
   S.pkgJob = { file: path.split(/[\\/]/).pop(), stage: "extracting", files_done: 0, files_total: 0, bytes_done: 0, bytes_total: 1 };
   if (S.view === "library") renderLibrary();
   try {
-    await invoke("pkg_install", { path, folder: null, overwrite: overwrite || plan.exists });
+    await invoke("pkg_install", { path, folder, overwrite: overwrite || plan.exists });
     toast(`${i.kind_name} ${i.title_id} installed.`, "ok");
     if (i.kind === "game" && !haveEngine("ps4") && !S.settings.engines.skip_ps4) {
       if (await ask("Get the PS4 engine?", "PS4 games run with shadPS4. Download it now?", "Download")) downloadEngine("shadps4");
@@ -772,6 +786,22 @@ function paneLibrary(pane) {
   add(pane, h("div", { style: { display: "flex", gap: "10px", marginTop: "22px" } },
     h("button", { class: "btn primary", "data-nav": true, onclick: addFolder }, "Add folder"),
     h("button", { class: "btn", "data-nav": true, onclick: async () => { await refresh(); renderPane(); toast(`${S.games.length} games found.`, "ok"); } }, "Scan again")));
+  const target = h("div", { class: "help mono", style: { wordBreak: "break-all" } }, "…");
+  invoke("pkg_target_folder").then((t) => (target.textContent = t)).catch(() => (target.textContent = "—"));
+  add(pane, h("h4", { class: "sub" }, "Installing .pkg games"),
+    h("div", { class: "field" },
+      h("div", { class: "name" }, "Install games to", S.settings.pkg_install_folder ? null : h("span", { class: "tag debug" }, "Automatic")),
+      target,
+      h("div", { class: "ctl" },
+        h("button", { class: "btn small", "data-nav": true, onclick: async () => {
+          const p = await invoke("pick_folder");
+          if (!p) return;
+          S.settings.pkg_install_folder = p;
+          if (!S.settings.library_folders.includes(p)) S.settings.library_folders.push(p);
+          await save(true); renderPane();
+        } }, "Choose folder"),
+        S.settings.pkg_install_folder ? h("button", { class: "btn small ghost", "data-nav": true, onclick: async () => { S.settings.pkg_install_folder = ""; await save(true); renderPane(); } }, "Automatic") : null)),
+    h("div", { class: "micro", style: { textTransform: "none", letterSpacing: 0 } }, "Automatic uses your own games folder (for example E:\\PS5Games) instead of Strata's folder on drive C."));
 }
 
 function dlMeter(dl) {
@@ -990,13 +1020,14 @@ function paneGameDev(pane) {
     h("div", { class: "cmd", style: { maxHeight: "300px", overflow: "auto" } }, mine.length ? mine.map((l) => `${l.level.padEnd(5)} ${l.msg}`).join("\n") : "Nothing yet. Play the game to see its log here."));
 }
 
-function ask(title, text, okLabel = "OK", cancelLabel = "Cancel") {
+function ask(title, text, okLabel = "OK", cancelLabel = "Cancel", extraLabel = null) {
   return new Promise((resolve) => {
     const m = h("div", { class: "modal show dialog" });
     const done = (v) => { m.remove(); nav.setScope(prevScope); resolve(v); };
     const prevScope = $("#wizard").classList.contains("show") ? $("#wizard .sheet") : null;
     m.append(h("div", { class: "sheet small" }, h("h2", {}, title), h("p", {}, text),
       h("div", { style: { display: "flex", gap: "10px", justifyContent: "flex-end" } },
+        extraLabel ? h("button", { class: "btn ghost", "data-nav": true, style: { marginRight: "auto" }, onclick: () => done("extra") }, extraLabel) : null,
         h("button", { class: "btn", "data-nav": true, onclick: () => done(false) }, cancelLabel),
         h("button", { class: "btn primary", "data-nav": true, onclick: () => done(true) }, okLabel))));
     document.body.append(m);

@@ -166,6 +166,27 @@ fn found_pkgs(state: State<AppState>) -> Vec<String> {
     state.pkgs.lock().unwrap().clone()
 }
 
+/// Where installed games go: the chosen folder, else a library folder outside Strata's own
+/// data (usually the user's games drive), else Strata's Games folder.
+pub fn pkg_target(s: &Settings, default_games: &std::path::Path) -> PathBuf {
+    let chosen = PathBuf::from(s.pkg_install_folder.trim());
+    if !s.pkg_install_folder.trim().is_empty() && chosen.is_dir() {
+        return chosen;
+    }
+    let own = games::normalize(default_games);
+    s.library_folders
+        .iter()
+        .find(|f| games::normalize(std::path::Path::new(f)) != own && std::path::Path::new(f).is_dir())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_games.to_path_buf())
+}
+
+#[tauri::command]
+fn pkg_target_folder(state: State<AppState>) -> String {
+    let s = state.settings.lock().unwrap();
+    pkg_target(&s, &state.default_games_dir()).to_string_lossy().into_owned()
+}
+
 fn shadps4_user(state: &AppState) -> PathBuf {
     engines::root_dir(&state.data, "shadps4").join("user")
 }
@@ -197,7 +218,7 @@ async fn pkg_inspect(state: State<'_, AppState>, path: String, folder: Option<St
     let info = tauri::async_runtime::spawn_blocking(move || pkginstall::inspect(std::path::Path::new(&p))).await.map_err(|e| e.to_string())??;
     let library = folder.map(PathBuf::from).unwrap_or_else(|| {
         let s = state.settings.lock().unwrap();
-        s.library_folders.first().map(PathBuf::from).unwrap_or_else(|| state.default_games_dir())
+        pkg_target(&s, &state.default_games_dir())
     });
     let game = state.games.lock().unwrap().iter().find(|g| g.title_id == info.title_id && g.platform == "ps4" && !g.archive).map(|g| PathBuf::from(&g.path));
     let dest = pkginstall::destination(&info, &library, game.as_deref(), &shadps4_user(&state));
@@ -814,6 +835,30 @@ fn paths(state: State<AppState>) -> serde_json::Value {
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installs_go_to_the_games_drive() {
+        let root = std::env::temp_dir().join(format!("strata_target_{}", std::process::id()));
+        let own = root.join("data/Games");
+        let hd = root.join("E/PS5Games");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::create_dir_all(&hd).unwrap();
+        let mut s = Settings::default();
+        s.library_folders = vec![own.to_string_lossy().into(), hd.to_string_lossy().into()];
+        assert_eq!(pkg_target(&s, &own), hd, "the user's own folder beats Strata's");
+        s.library_folders = vec![own.to_string_lossy().into()];
+        assert_eq!(pkg_target(&s, &own), own);
+        s.pkg_install_folder = hd.to_string_lossy().into();
+        assert_eq!(pkg_target(&s, &own), hd, "a chosen folder wins");
+        s.pkg_install_folder = root.join("missing").to_string_lossy().into();
+        assert_eq!(pkg_target(&s, &own), own, "a missing chosen folder is ignored");
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let data = settings::data_dir();
@@ -858,6 +903,7 @@ pub fn run() {
             pick_pkg,
             pick_patch,
             pkg_inspect,
+            pkg_target_folder,
             pkg_install,
             game_extras,
             set_mods,

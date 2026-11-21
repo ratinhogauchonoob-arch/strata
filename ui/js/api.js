@@ -95,7 +95,8 @@ function defaults() {
   return {
     version: 2, first_run: true, engine_path: "",
     engines: { order_ps5: ["kyty", "sharpemu", "anyps5"], order_ps4: ["shadps4", "sharpemu"], auto_fallback: true, fail_seconds: 20, paths: {}, skip_ps4: false },
-    controls: { enabled: false, keys: { ...MKEYS }, swap_cross_circle: false, deadzone: 8 }, library_folders: ["C:/Strata/data/Games", "D:/Games"],
+    controls: { enabled: false, keys: { ...MKEYS }, swap_cross_circle: false, deadzone: 8 },
+    pkg_install_folder: "", library_folders: ["C:/Strata/data/Games", "D:/Games"],
     ui: { accent1: "ember", accent2: "cobalt", boot_style: "duo", reduce_motion: false, clock_24h: true, ui_sounds: true },
     emu: {
       resolution: "1280x720", present_mode: "Mailbox", gpu_index: -1, fullscreen: false, stretch: false, hdr: false, hide_cursor: true,
@@ -207,9 +208,10 @@ async function mock(cmd, a) {
     }
     case "backup_restore": return 14;
     case "found_pkgs": return mPkgs;
+    case "pkg_target_folder": return mset.pkg_install_folder || "D:/Games";
     case "pick_pkg": return "E:/PS4/Tidebreaker-CUSA00620.pkg";
     case "pick_patch": return "C:/Strata/patches/60fps.xml";
-    case "pkg_inspect": return { info: { path: a.path, content_id: "UP0000-DEMO00620_00-TIDEBREAKER00000", title_id: "DEMO00620", label: "TIDEBREAKER00000", kind: "game", kind_name: "Game", size_mb: 8123 }, destination: "C:/Strata/data/Games/DEMO00620", exists: false, game_found: false };
+    case "pkg_inspect": return { info: { path: a.path, content_id: "UP0000-DEMO00620_00-TIDEBREAKER00000", title_id: "DEMO00620", label: "TIDEBREAKER00000", kind: "game", kind_name: "Game", size_mb: 8123 }, destination: (a.folder || mset.pkg_install_folder || "D:/Games") + "/DEMO00620", exists: false, game_found: false };
     case "pkg_install": {
       for (let i = 1; i <= 8; i++) setTimeout(() => emit("pkg-progress", { file: "Tidebreaker-CUSA00620.pkg", stage: "extracting", files_done: i * 120, files_total: 960, bytes_done: i * 1e9, bytes_total: 8e9, message: "" }), i * 120);
       await new Promise((r) => setTimeout(r, 1100));

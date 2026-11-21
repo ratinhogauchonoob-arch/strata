@@ -107,6 +107,92 @@ pub fn pick_release(list: &serde_json::Value) -> Option<(String, (String, String
     usable(false).or_else(|| usable(true))
 }
 
+/// AnyPS5 ships the converter as a bare executable ("relinker-<tag>.exe") and its runtime
+/// libraries in "prx-<os>-<tag>.zip" (files under libs/). Returns (tag, exe asset, libs asset).
+#[allow(clippy::type_complexity)]
+pub fn pick_anyps5(list: &serde_json::Value) -> Option<(String, (String, String, u64), (String, String, u64))> {
+    let os = if cfg!(windows) { "windows" } else { "linux" };
+    list.as_array()?.iter().filter(|r| !r.get("draft").and_then(|d| d.as_bool()).unwrap_or(false)).find_map(|r| {
+        let tag = r.get("tag_name")?.as_str()?.to_string();
+        let assets = r.get("assets")?.as_array()?;
+        let get = |want: &dyn Fn(&str) -> bool| {
+            assets.iter().find_map(|a| {
+                let name = a.get("name")?.as_str()?;
+                if !want(name) {
+                    return None;
+                }
+                Some((name.to_string(), a.get("browser_download_url")?.as_str()?.to_string(), a.get("size").and_then(|s| s.as_u64()).unwrap_or(0)))
+            })
+        };
+        let exe = get(&|n: &str| n.starts_with("relinker-") && if cfg!(windows) { n.ends_with(".exe") } else { !n.contains('.') || n.matches('.').count() <= 2 && !n.ends_with(".exe") && !n.ends_with(".zip") && !n.ends_with(".gz") })?;
+        let libs = get(&|n: &str| n.starts_with(&format!("prx-{os}-")) && n.ends_with(".zip") && !n.contains("unpatched"))?;
+        Some((tag, exe, libs))
+    })
+}
+
+fn fetch(agent: &ureq::Agent, url: &str, size: u64, to: &Path, name: &str, report: &dyn Fn(u64, u64, &str)) -> Result<u64, String> {
+    let resp = agent.get(url).call().map_err(|e| format!("download failed: {e}"))?;
+    let total = resp.header("Content-Length").and_then(|v| v.parse().ok()).unwrap_or(size);
+    let mut reader = resp.into_reader();
+    let mut file = fs::File::create(to).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; 256 * 1024];
+    let (mut received, mut last) = (0u64, 0u64);
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| format!("download interrupted: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        received += n as u64;
+        if received - last > 2 * 1024 * 1024 {
+            last = received;
+            report(received, total, name);
+        }
+    }
+    if total > 0 && received < total {
+        return Err(format!("download incomplete ({received} of {total} bytes)"));
+    }
+    Ok(received)
+}
+
+fn keep_only(engine_dir: &Path, dest: &Path) {
+    if let Ok(rd) = fs::read_dir(engine_dir) {
+        for e in rd.flatten() {
+            if e.path() != dest && e.path().is_dir() {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
+    }
+}
+
+fn download_anyps5(def: &EngineDef, data: &Path, agent: &ureq::Agent, list: &serde_json::Value, report: &dyn Fn(Progress)) -> Result<PathBuf, String> {
+    let p = |stage: &str, r: u64, t: u64, m: &str| Progress { stage: stage.into(), received: r, total: t, message: m.into(), engine: def.id.into() };
+    let (tag, (exe_name, exe_url, exe_size), (libs_name, libs_url, libs_size)) =
+        pick_anyps5(list).ok_or("No AnyPS5 release has the converter and libraries for this system yet.")?;
+    logs::info("download", &format!("AnyPS5 release {tag}: {exe_name} + {libs_name}"));
+    let engine_dir = crate::engines::bin_dir(data, def.id);
+    let dest = engine_dir.join(format!("AnyPS5-{tag}"));
+    let _ = fs::remove_dir_all(&dest);
+    fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    let total = exe_size + libs_size;
+    let exe_path = dest.join(if cfg!(windows) { "relinker.exe" } else { "relinker" });
+    let got = fetch(agent, &exe_url, exe_size, &exe_path, &exe_name, &|r, _, n| report(p("downloading", r, total, n)))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&exe_path, fs::Permissions::from_mode(0o755));
+    }
+    let zip_path = dest.join("_libs.zip");
+    fetch(agent, &libs_url, libs_size, &zip_path, &libs_name, &|r, _, n| report(p("downloading", got + r, total, n)))?;
+    report(p("extracting", total, total, "Unpacking…"));
+    let files = extract(&zip_path, &dest)?;
+    let _ = fs::remove_file(&zip_path);
+    keep_only(&engine_dir, &dest);
+    logs::info("download", &format!("AnyPS5 ready ({files} library files) in {}", dest.display()));
+    report(p("done", total, total, &tag));
+    Ok(dest)
+}
+
 pub fn extract(zip_path: &Path, dest: &Path) -> Result<usize, String> {
     let file = fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("bad zip: {e}"))?;
@@ -143,6 +229,9 @@ pub fn download_latest(def: &EngineDef, data: &Path, report: &dyn Fn(Progress)) 
         .into_string()
         .map_err(|e| e.to_string())?;
     let list: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    if id == "anyps5" {
+        return download_anyps5(def, data, &agent, &list, report);
+    }
     let (tag, (name, url, size)) =
         pick_release(&list).ok_or_else(|| format!("No {} release has a .zip for this system yet.", def.name))?;
     logs::info("download", &format!("{} release {tag}: {name} ({} MB)", def.name, size / 1_048_576));
@@ -150,29 +239,8 @@ pub fn download_latest(def: &EngineDef, data: &Path, report: &dyn Fn(Progress)) 
     let engine_dir = crate::engines::bin_dir(data, id);
     fs::create_dir_all(&engine_dir).map_err(|e| e.to_string())?;
     let zip_path = engine_dir.join("_download.zip");
-    let resp = agent.get(&url).call().map_err(|e| format!("download failed: {e}"))?;
-    let total = resp.header("Content-Length").and_then(|v| v.parse().ok()).unwrap_or(size);
-    let mut reader = resp.into_reader();
-    let mut file = fs::File::create(&zip_path).map_err(|e| e.to_string())?;
-    let mut buf = vec![0u8; 256 * 1024];
-    let mut received = 0u64;
-    let mut last = 0u64;
-    loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("download interrupted: {e}"))?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-        received += n as u64;
-        if received - last > 2 * 1024 * 1024 {
-            last = received;
-            report(p("downloading", received, total, &name));
-        }
-    }
-    drop(file);
-    if total > 0 && received < total {
-        return Err(format!("download incomplete ({received} of {total} bytes)"));
-    }
+    let received = fetch(&agent, &url, size, &zip_path, &name, &|r, t, n| report(p("downloading", r, t, n)))?;
+    let total = received;
 
     report(p("extracting", received, total, "Unpacking…"));
     let dest = engine_dir.join(name.trim_end_matches(".zip"));
@@ -183,13 +251,7 @@ pub fn download_latest(def: &EngineDef, data: &Path, report: &dyn Fn(Progress)) 
     let _ = fs::remove_file(&zip_path);
     // Keep only the new release next to it (saves live elsewhere, in the engine's user folder).
     if id != "kyty" {
-        if let Ok(rd) = fs::read_dir(&engine_dir) {
-            for e in rd.flatten() {
-                if e.path() != dest && e.path().is_dir() {
-                    let _ = fs::remove_dir_all(e.path());
-                }
-            }
-        }
+        keep_only(&engine_dir, &dest);
     }
     logs::info("download", &format!("Extracted {files} files to {}", dest.display()));
     report(p("done", received, total, &tag));
@@ -244,6 +306,30 @@ mod tests {
         assert_eq!(score_asset("tool.7z"), None);
         assert_eq!(score_asset("relinker-src.zip"), None);
         assert!(pick_release(&serde_json::json!([])).is_none());
+    }
+
+    #[test]
+    fn anyps5_takes_the_converter_and_the_libraries() {
+        let list: serde_json::Value = serde_json::from_str(
+            r#"[{"tag_name":"v0.1.2","draft":false,"prerelease":false,"assets":[
+                {"name":"prx-windows-unpatched-v0.1.2.zip","browser_download_url":"u","size":1},
+                {"name":"prx-windows-v0.1.2.zip","browser_download_url":"pw","size":2},
+                {"name":"prx-linux-v0.1.2.zip","browser_download_url":"pl","size":2},
+                {"name":"prx-windows-v0.1.2.tar.gz","browser_download_url":"tgz","size":2},
+                {"name":"relinker-v0.1.2.exe","browser_download_url":"ew","size":3},
+                {"name":"relinker-v0.1.2","browser_download_url":"el","size":3},
+                {"name":"web-v0.1.2.zip","browser_download_url":"web","size":4}]}]"#,
+        )
+        .unwrap();
+        let (tag, exe, libs) = pick_anyps5(&list).unwrap();
+        assert_eq!(tag, "v0.1.2");
+        if cfg!(windows) {
+            assert_eq!((exe.1.as_str(), libs.1.as_str()), ("ew", "pw"));
+        } else {
+            assert_eq!((exe.1.as_str(), libs.1.as_str()), ("el", "pl"));
+        }
+        // The generic picker alone would grab the wrong zip, which caused the 0.11 bug.
+        assert!(pick_anyps5(&serde_json::json!([{"tag_name":"x","assets":[{"name":"prx-windows-x.zip","browser_download_url":"a"}]}])).is_none());
     }
 
     #[test]

@@ -7,6 +7,8 @@
 - Update, mods and unfinished install folders no longer appear as separate games.
 - Fixed: shadPS4 used `%APPDATA%\shadPS4` instead of Strata's folder, so keys, DLC and system modules set by Strata were ignored.
 - Engines → shadPS4 has an "Open sys_modules" button for system modules dumped from your console.
+- Installed games go to your own games folder (for example `E:\PS5Games`) instead of Strata's folder on drive C. "Change folder" in the install window, and Settings → Library → "Install games to".
+- Fixed: AnyPS5 download said "AnyPS5 was not inside the release". AnyPS5 publishes the converter as a separate `.exe` plus a libraries zip; Strata now downloads both.
 - Clearer message when a .pkg cannot be opened (shows the Windows reason).
 - PS4 tag on library cards; the performance overlay setting explains the F10 key for shadPS4 and AnyPS5.
 
