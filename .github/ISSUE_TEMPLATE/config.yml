@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report on the website
+    url: http://strata.test/report
+    about: The quickest way — the form accepts the diagnostics file directly.
+  - name: Guide & troubleshooting
+    url: http://strata.test/guide
+    about: Every setting explained, plus common exit codes and fixes.
+  - name: A game does not run
+    url: https://github.com/KytyPS5/KytyPS5
+    about: Game compatibility comes from the KytyPS5 engine — check its compatibility list.

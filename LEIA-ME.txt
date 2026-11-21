@@ -8,6 +8,16 @@ O QUE E
   O motor que roda os jogos e o KytyPS5 (GPL-2.0). O Strata baixa ele sozinho
   do GitHub oficial (Settings -> Engine -> Download) ou usa o que voce ja tem.
 
+GITHUB (repositorio "strata")
+  atualizar_github.bat  -> envia tudo, poe descricao/site/topicos no repo e
+                           pergunta se quer deixar PUBLICO (precisa para o site
+                           mostrar o download)
+  trocar_site.bat       -> quando o site sair do strata.test para o servidor de
+                           verdade: digite o endereco novo e ele troca no README,
+                           CONTRIBUTING e modelos de issue (depois rode
+                           atualizar_github.bat). O endereco fica em site-url.txt
+  lancar_versao.bat     -> cria a release v0.9.0-beta (instalador + portatil)
+
 COMO COMPILAR (sem gastar espaco no PC)
   1. Clique em  compilar_na_nuvem.bat
      - cria o repositorio PRIVADO "strata" na sua conta do GitHub

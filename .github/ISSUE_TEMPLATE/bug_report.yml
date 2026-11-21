@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in Strata does not work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please do **not** attach game files, keys or firmware.
+        Tip: Settings → Developer → turn on Developer mode, reproduce the problem, then Developer → **Export diagnostics** and attach the `.txt` file.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type
+      options:
+        - Game or app crashes
+        - Low FPS / stutter
+        - Graphics glitch / black screen
+        - Strata launcher (UI, settings, library)
+        - Install or engine download
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+      description: Include the exit code if Strata showed one (e.g. 0xC0000005).
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Strata
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Strata version
+      placeholder: 0.9.0 Beta
+  - type: input
+    id: game
+    attributes:
+      label: Game (title, ID, version)
+  - type: input
+    id: hardware
+    attributes:
+      label: GPU / CPU / Windows
+      placeholder: RTX 4050 Laptop · Core i5-13420H · Windows 11 24H2
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Drag the exported diagnostics .txt here.
