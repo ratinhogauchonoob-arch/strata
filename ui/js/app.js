@@ -227,7 +227,7 @@ function renderHome() {
     h("div", { class: "eyebrow" },
       h("span", { class: "micro idx" }, String(S.sel + 1).padStart(2, "0") + " / " + String(games.length).padStart(2, "0")),
       h("span", { class: "micro" }, g.archive ? "Archive" : g.title_id || "Folder")),
-    h("h1", {}, g.title),
+    g.logo ? h("img", { class: "logo", src: fileSrc(g.logo), alt: g.title }) : h("h1", {}, g.title),
     h("div", { class: "meta" },
       h("span", {}, "Played ", h("b", {}, fmtTime(e.play_seconds))),
       h("span", {}, "Last ", h("b", {}, fmtAgo(e.last_played))),

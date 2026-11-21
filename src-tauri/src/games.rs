@@ -18,6 +18,8 @@ pub struct Game {
     pub archive: bool,
     pub icon: Option<String>,
     pub background: Option<String>,
+    /// Transparent title logo (only from the user's own art folder).
+    pub logo: Option<String>,
     pub size_mb: u64,
     pub folder: String,
 }
@@ -100,6 +102,11 @@ fn dir_size_mb(dir: &Path) -> u64 {
     walk(dir, 0) / (1024 * 1024)
 }
 
+/// User art overrides: <game>/strata/cover.png, background.png (or .jpg), logo.png.
+fn custom_art(dir: &Path, name: &str) -> Option<String> {
+    ["png", "jpg", "jpeg", "webp"].iter().map(|ext| dir.join("strata").join(format!("{name}.{ext}"))).find(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned())
+}
+
 fn read_game(dir: &Path, folder: &str, with_size: bool) -> Game {
     let sys = dir.join("sce_sys");
     let meta = fs::read_to_string(sys.join("param.json")).map(|t| parse_param(&t)).unwrap_or_default();
@@ -116,8 +123,9 @@ fn read_game(dir: &Path, folder: &str, with_size: bool) -> Game {
         version: meta.version,
         firmware: meta.firmware,
         archive: false,
-        icon: img("icon0.png"),
-        background: img("pic0.png").or_else(|| img("pic1.png")),
+        icon: custom_art(dir, "cover").or_else(|| img("icon0.png")),
+        background: custom_art(dir, "background").or_else(|| img("pic0.png")).or_else(|| img("pic1.png")),
+        logo: custom_art(dir, "logo"),
         size_mb: if with_size { dir_size_mb(dir) } else { 0 },
         folder: folder.to_string(),
     }
@@ -143,6 +151,11 @@ fn scan_dir(dir: &Path, folder: &str, depth: usize, out: &mut Vec<Game>, with_si
             scan_dir(&p, folder, depth + 1, out, with_size);
         } else if name.ends_with(".zar") {
             let size = p.metadata().map(|m| m.len() / (1024 * 1024)).unwrap_or(0);
+            // Art for archives sits next to them: Game.zar + Game.png / Game.background.png / Game.logo.png
+            let side = |suffix: &str| {
+                let stem = p.with_extension("");
+                ["png", "jpg"].iter().map(|e| PathBuf::from(format!("{}{suffix}.{e}", stem.display()))).find(|x| x.is_file()).map(|x| x.to_string_lossy().into_owned())
+            };
             out.push(Game {
                 id: normalize(&p),
                 path: p.to_string_lossy().into_owned(),
@@ -151,8 +164,9 @@ fn scan_dir(dir: &Path, folder: &str, depth: usize, out: &mut Vec<Game>, with_si
                 version: String::new(),
                 firmware: String::new(),
                 archive: true,
-                icon: None,
-                background: None,
+                icon: side(""),
+                background: side(".background"),
+                logo: side(".logo"),
                 size_mb: size,
                 folder: folder.to_string(),
             });
@@ -212,6 +226,30 @@ mod tests {
         assert_eq!(list[1].title_id, "ABCD12345");
         assert!(list[1].icon.is_some());
         assert!(list[1].background.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn custom_art_overrides() {
+        let root = std::env::temp_dir().join(format!("strata_art_{}", std::process::id()));
+        let game = root.join("G");
+        fs::create_dir_all(game.join("sce_sys")).unwrap();
+        fs::create_dir_all(game.join("strata")).unwrap();
+        fs::write(game.join("eboot.bin"), b"x").unwrap();
+        fs::write(game.join("sce_sys/icon0.png"), b"a").unwrap();
+        fs::write(game.join("strata/cover.jpg"), b"b").unwrap();
+        fs::write(game.join("strata/logo.png"), b"c").unwrap();
+        fs::write(root.join("Z.zar"), b"z").unwrap();
+        fs::write(root.join("Z.png"), b"p").unwrap();
+        fs::write(root.join("Z.logo.png"), b"l").unwrap();
+        let list = scan(&[root.to_string_lossy().into_owned()], false);
+        let g = list.iter().find(|x| !x.archive).unwrap();
+        assert!(g.icon.as_ref().unwrap().ends_with("cover.jpg"));
+        assert!(g.logo.as_ref().unwrap().ends_with("logo.png"));
+        let z = list.iter().find(|x| x.archive).unwrap();
+        assert!(z.icon.as_ref().unwrap().ends_with("Z.png"));
+        assert!(z.logo.as_ref().unwrap().ends_with("Z.logo.png"));
+        assert!(z.background.is_none());
         let _ = fs::remove_dir_all(root);
     }
 }

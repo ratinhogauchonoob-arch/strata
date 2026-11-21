@@ -40,8 +40,16 @@ O QUE TEM
     Logs ficam em data\logs (um arquivo por sessao de jogo).
   - Controle (Gamepad), teclado e mouse. Q/E ou LB/RB trocam de aba. F11 tela cheia.
 
+ARTE DOS JOGOS
+  Automatico: capa = sce_sys\icon0.png, fundo = sce_sys\pic0.png (ou pic1.png).
+  Logo/arte propria (opcional): crie a pasta "strata" dentro da pasta do jogo:
+     <jogo>\strata\logo.png        -> logo transparente no lugar do nome na Home
+     <jogo>\strata\cover.png       -> troca a capa
+     <jogo>\strata\background.png  -> troca o fundo
+  Para .zar: ao lado do arquivo -> Jogo.png, Jogo.logo.png, Jogo.background.png
+
 TESTES
-  cargo test --lib (24 testes) roda no GitHub antes de compilar.
+  cargo test --lib (25 testes) roda no GitHub antes de compilar.
 
 LICENCA
   GPL-2.0 (LICENSE.txt). Sem afiliacao com fabricante de console.
