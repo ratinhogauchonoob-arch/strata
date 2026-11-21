@@ -279,7 +279,15 @@ pub fn plan(def: &EngineDef, i: PlanInput) -> Plan {
 pub fn user_dirs(def: &EngineDef, data: &Path, exe: Option<&Path>) -> Vec<PathBuf> {
     let mut v = Vec::new();
     match def.kind {
-        Kind::ShadPs4 | Kind::SharpEmu => v.push(root_dir(data, def.id).join("user")),
+        Kind::ShadPs4 | Kind::SharpEmu => {
+            v.push(root_dir(data, def.id).join("user"));
+            // Saves made before Strata gave shadPS4 its own folder.
+            if def.kind == Kind::ShadPs4 {
+                if let Ok(appdata) = std::env::var("APPDATA") {
+                    v.push(PathBuf::from(appdata).join("shadPS4"));
+                }
+            }
+        }
         Kind::AnyPs5 => v.push(root_dir(data, def.id).join("apps")),
         Kind::Kyty => {
             if let Some(d) = exe.and_then(Path::parent) {

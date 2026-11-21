@@ -801,7 +801,9 @@ function paneEngines(pane) {
           renderPane(); renderTop();
         } }, "Choose folder"),
         es.paths[en.id] ? h("button", { class: "btn small ghost", "data-nav": true, onclick: async () => { delete es.paths[en.id]; await save(true); await loadEngines(); renderPane(); } }, "Reset") : null),
-      dlMeter(dl)));
+      dlMeter(dl),
+      en.id === "shadps4" && en.path ? h("div", { class: "help", style: { marginTop: "8px" } }, "Some PS4 games need system modules (libSceLibcInternal.sprx, libSceNgs2.sprx…) dumped from your own console. Put them in shadPS4's sys_modules folder. ",
+        h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.shadps4_modules }).catch(() => toast("Start a PS4 game once to create the folder.", "warn")); } }, "Open sys_modules")) : null));
   }
   const orderRow = (label, key, platform) => {
     const ids = es[key];

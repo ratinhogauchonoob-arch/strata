@@ -72,7 +72,9 @@ fn open(path: &Path) -> Result<orbis_pkg::Pkg<memmap2::Mmap>, String> {
     // SAFETY: the file is opened read-only and only read while the map is alive.
     unsafe { orbis_pkg_util::open_pkg(path) }.map_err(|e| match e {
         orbis_pkg_util::OpenPkgError::ParsePkg { source } => friendly(source),
-        other => format!("Could not open the file: {other}"),
+        orbis_pkg_util::OpenPkgError::OpenFile { source } | orbis_pkg_util::OpenPkgError::MmapFile { source } => {
+            format!("Could not open the file ({source}). If it is still downloading or open in another program, wait and try again.")
+        }
     })
 }
 

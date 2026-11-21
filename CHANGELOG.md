@@ -5,6 +5,9 @@
 - Loose `.pkg` files in your library folders show up in Library with an Install button.
 - New per-game page **Update, DLC & mods** (PS4): installed update and its version, DLC list, a mods folder you can switch on/off, and a patch file (XML) for shadPS4.
 - Update, mods and unfinished install folders no longer appear as separate games.
+- Fixed: shadPS4 used `%APPDATA%\shadPS4` instead of Strata's folder, so keys, DLC and system modules set by Strata were ignored.
+- Engines → shadPS4 has an "Open sys_modules" button for system modules dumped from your console.
+- Clearer message when a .pkg cannot be opened (shows the Windows reason).
 - PS4 tag on library cards; the performance overlay setting explains the F10 key for shadPS4 and AnyPS5.
 
 ## 0.10.0 Beta — 2026-11-21

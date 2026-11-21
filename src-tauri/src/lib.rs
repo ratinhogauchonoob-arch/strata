@@ -439,6 +439,12 @@ fn start_attempt(app: AppHandle, mut a: Attempt) -> Result<engine::RunningInfo, 
             a.idx += 1;
             continue;
         };
+        if def.kind == engines::Kind::ShadPs4 {
+            // shadPS4 only uses "<working folder>/user" when that folder already exists; otherwise it
+            // falls back to %APPDATA%\shadPS4 and ignores Strata's controls, DLC and modules.
+            let user = engines::root_dir(&state.data, "shadps4").join("user");
+            let _ = std::fs::create_dir_all(user.join("sys_modules"));
+        }
         let key = if a.game.title_id.is_empty() { engines::safe_key(&a.game.id) } else { a.game.title_id.clone() };
         let controls_file = match controls::write_for(def.kind, &a.controls, &state.data, &a.game.title_id, &key) {
             Ok(f) => f,
@@ -804,6 +810,7 @@ fn paths(state: State<AppState>) -> serde_json::Value {
         "engine": state.data.join("engine"),
         "engines": state.data.join("engines"),
         "backups": backups::backups_dir(&state.data),
+        "shadps4_modules": engines::root_dir(&state.data, "shadps4").join("user").join("sys_modules"),
     })
 }
 
