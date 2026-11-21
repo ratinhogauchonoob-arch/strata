@@ -49,7 +49,7 @@ ARTE DOS JOGOS
   Para .zar: ao lado do arquivo -> Jogo.png, Jogo.logo.png, Jogo.background.png
 
 TESTES
-  cargo test --lib (25 testes) roda no GitHub antes de compilar.
+  cargo test --lib (25 testes) - rodar no Linux; no Windows o teste do Tauri nao abre sem manifest.
 
 LICENCA
   GPL-2.0 (LICENSE.txt). Sem afiliacao com fabricante de console.
