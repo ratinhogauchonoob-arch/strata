@@ -237,6 +237,8 @@ pub struct ExitInfo {
     pub seconds: u64,
     pub stopped: bool,
     pub skip: bool,
+    /// What the engine printed that explains a failure (missing functions/modules).
+    pub findings: crate::compat::Findings,
 }
 
 pub struct LaunchRequest<'a> {
@@ -295,6 +297,7 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
     let safe_title: String = req.title.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).take(40).collect();
     let session_path = logs_dir.join(format!("session-{}-{}.log", logs::stamp(), safe_title));
     let session = Arc::new(Mutex::new(std::fs::File::create(&session_path).ok()));
+    let findings = Arc::new(Mutex::new(crate::compat::Findings::default()));
     if let Some(f) = session.lock().unwrap().as_mut() {
         let _ = writeln!(
             f,
@@ -327,6 +330,7 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
     {
         let Some(pipe) = pipe else { continue };
         let session = session.clone();
+        let findings = findings.clone();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(pipe);
             let mut buf = Vec::new();
@@ -343,6 +347,7 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
                         if let Some(f) = session.lock().unwrap().as_mut() {
                             let _ = writeln!(f, "{line}");
                         }
+                        crate::compat::scan_line(line, &mut findings.lock().unwrap());
                         let level = if is_err { "warn" } else { logs::classify(line) };
                         let level = if logs::classify(line) == "error" { "error" } else { level };
                         logs::log(level, "engine", line);
@@ -360,6 +365,7 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
     let skip = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let (stopped, skip) = (stopped.clone(), skip.clone());
+        let findings = findings.clone();
         let child = child.clone();
         let game_id = req.game_id.to_string();
         let session = session.clone();
@@ -377,7 +383,10 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
                 let _ = writeln!(f, "\n# exited with code {code:?} after {seconds} s");
             }
             use std::sync::atomic::Ordering::SeqCst;
-            on_exit(ExitInfo { game_id, code, seconds, stopped: stopped.load(SeqCst), skip: skip.load(SeqCst) });
+            // Give the log readers a moment to finish the last lines.
+            std::thread::sleep(Duration::from_millis(150));
+            let findings = findings.lock().unwrap().clone();
+            on_exit(ExitInfo { game_id, code, seconds, stopped: stopped.load(SeqCst), skip: skip.load(SeqCst), findings });
         });
     }
 

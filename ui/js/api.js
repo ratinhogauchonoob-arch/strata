@@ -201,6 +201,11 @@ async function mock(cmd, a) {
     case "monitor_refresh": return 280;
     case "skipped_folders": return [{ path: "E:/PS5Games/backport (4.xx to 10.xx)", reason: "has eboot.bin but no sce_sys/param.json or param.sfo (not a game dump)" }];
     case "control_info": return { actions: MACTIONS, keys: [..."abcdefghijklmnopqrstuvwxyz0123456789"].concat(Array.from({ length: 12 }, (_, i) => "f" + (i + 1)), Array.from({ length: 10 }, (_, i) => "kp" + i), ["space","enter","escape","tab","backspace","lshift","rshift","lctrl","rctrl","lalt","ralt","up","down","left","right","mouse_left","mouse_right","mouse_middle"]) };
+    case "game_compat": return { file: "C:/Strata/data/compat/DEMO00101.json", record: { title: "Demo", title_id: "DEMO00101", analysis: { version: 1, format: "elf", readable: true, imports: Array.from({ length: 1240 }, (_, i) => "n" + i), libraries: Array.from({ length: 38 }, (_, i) => "l" + i), bundled: ["libc.prx", "libSceFios2.prx"], game_engine: "Unreal Engine", eboot_size: 1, eboot_mtime: 1 },
+      attempts: [{ engine: "sharpemu", release: "sharpemu-0.0.7-pulse-win-x64", when: 1795300000, seconds: 6, code: 4, worked: false, findings: { missing_functions: ["qCSfqDILlns"], missing_modules: [], last_error: "" } }, { engine: "kyty", release: "KytyPS5-2026-11-21", when: 1795301000, seconds: 412, code: 0, worked: true, findings: { missing_functions: [], missing_modules: [], last_error: "" } }] },
+      scores: [{ engine: "kyty", score: 100, label: "worked", reason: "Ran this game for 412 s last time.", known_missing: [] }, { engine: "anyps5", score: 60, label: "medium", reason: "No known gaps for the 1240 functions this game uses.", known_missing: [] }, { engine: "sharpemu", score: 5, label: "failed", reason: "Closed after 6 s last time (missing function qCSfqDILlns).", known_missing: ["qCSfqDILlns"] }] };
+    case "compat_reset": return null;
+    case "open_url": return null;
     case "backup_list": return mBackups;
     case "backup_create": {
       const g = demoGames.find((x) => x.id === a.gameId);
@@ -223,7 +228,7 @@ async function mock(cmd, a) {
     case "game_extras": return { update: mMods.update, update_version: "01.05", mods: mMods.on || mMods.off ? "D:/Games/X-mods" : null, mods_enabled: mMods.on, mods_files: 3, dlc: ["SOUNDTRACK"] };
     case "set_mods": mMods.on = a.enabled; mMods.off = !a.enabled; return "D:/Games/X-mods";
     case "export_diagnostics": return "C:/Strata/data/logs/diagnostics-20261120.txt";
-    case "paths": return { data: "C:/Strata/data", logs: "C:/Strata/data/logs", games: "C:/Strata/data/Games", engine: "C:/Strata/data/engine", engines: "C:/Strata/data/engines", backups: "C:/Strata/data/backups" };
+    case "paths": return { data: "C:/Strata/data", logs: "C:/Strata/data/logs", games: "C:/Strata/data/Games", engine: "C:/Strata/data/engine", engines: "C:/Strata/data/engines", backups: "C:/Strata/data/backups", compat: "C:/Strata/data/compat" };
   }
   throw new Error("mock: unknown command " + cmd);
 }

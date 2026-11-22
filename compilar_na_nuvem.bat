@@ -1,10 +1,12 @@
 @echo off
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
-title Strata - compilar na nuvem (repo PRIVADO)
+title Strata - compilar na nuvem (repo PRIVADO de builds)
 cd /d "%~dp0"
 echo ============================================================
-echo  Compila o Strata nos PCs do GitHub. Repo PRIVADO: so voce ve.
+echo  Compila o Strata nos PCs do GitHub, no repo PRIVADO strata-builds.
+echo  So voce ve. O repo publico "strata" NAO e tocado.
+echo  Cada build fica guardado em strata-builds - Releases (build-1, build-2...).
 echo  Leva uns 10-20 min. No fim aparece a pasta Strata-pronto.
 echo ============================================================
 set "WG=%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe"
@@ -22,23 +24,26 @@ gh auth status >nul 2>nul || (
 gh auth setup-git >nul 2>nul
 for /f "usebackq delims=" %%U in (`gh api user -q .login`) do set "GHUSER=%%U"
 if not defined GHUSER goto :erro
-set "REPO=!GHUSER!/strata"
+set "REPO=!GHUSER!/strata-builds"
 echo Conta: !GHUSER!
 
 gh repo view "!REPO!" >nul 2>nul || (
-  echo Criando repositorio PRIVADO !REPO!...
-  gh repo create "!REPO!" --private --description "Strata launcher" >nul || goto :erro
+  echo Criando repositorio PRIVADO !REPO! so para os builds...
+  gh repo create "!REPO!" --private --description "Strata - builds de teste (privado)" >nul || goto :erro
 )
 
 if not exist ".git" (
   git init -q -b main || goto :erro
-  git remote add origin "https://github.com/!REPO!.git"
+  git remote add origin "https://github.com/!GHUSER!/strata.git"
 )
+git remote get-url builds >nul 2>nul && git remote set-url builds "https://github.com/!REPO!.git"
+git remote get-url builds >nul 2>nul || git remote add builds "https://github.com/!REPO!.git"
 git config user.name "!GHUSER!"
 git config user.email "!GHUSER!@users.noreply.github.com"
 git add -A
 git commit -q -m "Strata build %date% %time%" 2>nul
-git push -u origin main --force || goto :erro
+rem Envia so para o repo privado de builds (o publico fica igual ate voce usar atualizar_github.bat)
+git push builds HEAD:main --force || goto :erro
 
 echo Esperando o GitHub comecar...
 timeout /t 15 >nul
@@ -66,6 +71,7 @@ echo.
 echo ============================================================
 echo  PRONTO!  Strata-pronto\Strata\Strata.exe  (versao portatil)
 echo  ou o instalador Strata_*_x64-setup.exe na mesma pasta.
+echo  Historico de builds: https://github.com/!REPO!/releases
 echo ============================================================
 start "" explorer "%~dp0Strata-pronto"
 pause

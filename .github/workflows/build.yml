@@ -45,6 +45,22 @@ jobs:
           path: out/**
           if-no-files-found: error
 
+      # Private "<user>/strata-builds" repo: every push becomes a numbered build release
+      # (build-1, build-2, ...) so old test builds stay downloadable. The public repo never does this.
+      - name: Save build (private builds repo only)
+        if: endsWith(github.repository, '-builds') && !startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Build ${{ github.run_number }}
+          prerelease: true
+          body: Test build from ${{ github.sha }}.
+          files: |
+            out/*-setup.exe
+            out/*-portable.zip
+            out/SHA256SUMS.txt
+
       # Attaches the files to the release of this tag (creates it if needed).
       # Name and notes are left alone so text written on GitHub is never overwritten.
       - name: Publish GitHub release (tags only)

@@ -112,6 +112,7 @@ export const SECTIONS = [
       { key: "emu.renderdoc", type: "toggle", label: "RenderDoc capture", tag: "debug", help: "Allows frame captures with RenderDoc." },
     ],
   },
+  { id: "compat", group: "Launcher", title: "Compatibility", custom: "compat", perGame: "only", lead: "What this game needs and how likely each engine is to run it." },
   { id: "extras", group: "Launcher", title: "Update, DLC & mods", custom: "extras", perGame: "only", ps4Only: true, lead: "Extra content installed next to this game." },
   { id: "gamedev", group: "Launcher", title: "Developer", custom: "gamedev", perGame: "only", devOnly: true, lead: "Logs and details for this game." },
   { id: "about", group: "Launcher", title: "About", custom: "about", perGame: false, lead: "" },

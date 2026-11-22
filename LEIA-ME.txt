@@ -1,4 +1,4 @@
-STRATA 0.9.0 BETA - launcher novo (UI propria) usando o motor KytyPS5
+STRATA 0.10.0 BETA - launcher (UI propria) com os motores KytyPS5, SharpEmu e AnyPS5
 =========================================================
 
 O QUE E
@@ -16,11 +16,13 @@ GITHUB (repositorio "strata")
                            verdade: digite o endereco novo e ele troca no README,
                            CONTRIBUTING e modelos de issue (depois rode
                            atualizar_github.bat). O endereco fica em site-url.txt
-  lancar_versao.bat     -> cria a release v0.9.0-beta (instalador + portatil)
+  lancar_versao.bat     -> cria a release publica da versao (ex.: v0.10.0-beta)
 
 COMO COMPILAR (sem gastar espaco no PC)
   1. Clique em  compilar_na_nuvem.bat
-     - cria o repositorio PRIVADO "strata" na sua conta do GitHub
+     - cria/usa o repositorio PRIVADO "strata-builds" (so seu, so para builds)
+     - o repo publico "strata" NAO muda: ele so muda com atualizar_github.bat
+     - cada build fica guardado em strata-builds -> Releases (build-1, build-2...)
      - o GitHub compila (10-20 min) e baixa o resultado em  Strata-pronto\
   2. Abra  Strata-pronto\Strata\Strata.exe   (portatil: cria a pasta "data" ao lado)
      ou instale com o  Strata_..._x64-setup.exe

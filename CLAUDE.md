@@ -24,3 +24,9 @@
 
 ## Release switch
 - lib.rs PS4_ENABLED = false for 0.10.0 (PS5 only). Full PS4 tree saved as Strata-0.11-ps4.zip. UI reads bootstrap.ps4; mock: index.html?ps4.
+
+## Compatibility (compat.rs)
+- analyze(): scans eboot.bin bytes for NID strings "XXXXXXXXXXX#l#m", lib names, engine strings; cached in data/compat/<ID>.json (fresh = same size+mtime).
+- engine.rs feeds every log line to compat::scan_line → Findings in ExitInfo; on_engine_exit records Attempt and learns missing NIDs per engine release (engines.json).
+- launch_game sorts the chain by compat::score (worked=100 > high > medium > low > failed); forced engine keeps order; fallback-off truncates after sorting.
+- SUPPORT links in app.js (empty = hidden). open_url only allows ko-fi/github/youtube/paypal/strata site.

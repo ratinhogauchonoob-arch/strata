@@ -1,6 +1,7 @@
 //! Strata — a launcher frontend. The UI lives in ../ui; this side talks to the OS and the engine.
 
 pub mod backups;
+pub mod compat;
 pub mod controls;
 pub mod display;
 pub mod download;
@@ -149,7 +150,7 @@ async fn apply_auto_profile(state: State<'_, AppState>) -> Result<Settings, Stri
 }
 
 #[tauri::command]
-async fn scan_games(state: State<'_, AppState>) -> Result<Vec<games::Game>, String> {
+async fn scan_games(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<games::Game>, String> {
     let folders = state.settings.lock().unwrap().library_folders.clone();
     let t = std::time::Instant::now();
     let (mut list, mut skipped, mut pkgs) = tauri::async_runtime::spawn_blocking(move || games::scan_full(&folders, false)).await.map_err(|e| e.to_string())?;
@@ -170,7 +171,64 @@ async fn scan_games(state: State<'_, AppState>) -> Result<Vec<games::Game>, Stri
     }
     *state.games.lock().unwrap() = list.clone();
     *state.skipped.lock().unwrap() = skipped;
+    // Read new or updated games' eboot.bin in the background (first launch is then faster).
+    {
+        let (data, games, app2) = (state.data.clone(), list.clone(), app.clone());
+        std::thread::spawn(move || {
+            let mut n = 0;
+            for g in games.iter().filter(|g| !g.archive) {
+                let rec = compat::load(&data, &compat_key(g));
+                if !compat::is_fresh(&rec.analysis, std::path::Path::new(&g.path)) {
+                    ensure_record(&data, g);
+                    n += 1;
+                }
+            }
+            if n > 0 {
+                logs::info("compat", &format!("Analyzed {n} game(s) in the background"));
+                let _ = app2.emit("compat-updated", n);
+            }
+        });
+    }
     Ok(list)
+}
+
+#[derive(Serialize)]
+struct CompatView {
+    record: compat::GameRecord,
+    scores: Vec<compat::Score>,
+    file: String,
+}
+
+#[tauri::command]
+async fn game_compat(state: State<'_, AppState>, id: String) -> Result<CompatView, String> {
+    let g = state.games.lock().unwrap().iter().find(|g| g.id == id).cloned().ok_or("Game not found.")?;
+    let (s, data) = (state.settings.lock().unwrap().clone(), state.data.clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        let rec = ensure_record(&data, &g);
+        let k = compat::load_knowledge(&data);
+        let mut scores = engine_scores(&s, &data, &g, &rec, &k);
+        scores.sort_by(|a, b| b.score.cmp(&a.score));
+        CompatView { file: compat::record_path(&data, &compat_key(&g)).to_string_lossy().into_owned(), record: rec, scores }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Forgets the test results of a game (the analysis stays): next launch tests the engines again.
+#[tauri::command]
+fn compat_reset(state: State<AppState>, id: String) -> Result<(), String> {
+    let g = state.games.lock().unwrap().iter().find(|g| g.id == id).cloned().ok_or("Game not found.")?;
+    let key = compat_key(&g);
+    let mut rec = compat::load(&state.data, &key);
+    rec.attempts.clear();
+    compat::save(&state.data, &key, &rec)?;
+    let mut s = state.settings.lock().unwrap();
+    if let Some(e) = s.games.get_mut(&id) {
+        e.good_engine.clear();
+    }
+    state.save(&s)?;
+    logs::info("compat", &format!("Test results for {} cleared", g.title));
+    Ok(())
 }
 
 #[tauri::command]
@@ -335,6 +393,22 @@ fn open_path(path: String) -> Result<(), String> {
     r.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Opens a web page in the default browser (only Strata's own links: https on known sites).
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    const OK: [&str; 6] = ["https://ko-fi.com/", "https://github.com/", "https://www.youtube.com/", "https://youtube.com/", "https://strata.gbxstudios.com", "https://www.paypal.com/"];
+    if !OK.iter().any(|p| url.starts_with(p)) || url.contains(['"', ' ', '\n']) {
+        return Err("This link is not allowed.".into());
+    }
+    #[cfg(windows)]
+    let r = std::process::Command::new("explorer").arg(&url).spawn();
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = std::process::Command::new("xdg-open").arg(&url).spawn();
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[derive(Clone, Serialize)]
 struct GameExit {
     game_id: String,
@@ -362,6 +436,42 @@ struct Attempt {
     fail_seconds: u32,
     failures: Vec<String>,
     patch_file: String,
+    /// Engine release per chain entry, for the compatibility record.
+    releases: Vec<String>,
+}
+
+fn compat_key(g: &games::Game) -> String {
+    if g.title_id.is_empty() { engines::safe_key(&g.id) } else { g.title_id.clone() }
+}
+
+/// Release folder of the installed engine ("" if missing): changes when the engine updates.
+fn engine_release(s: &Settings, data: &std::path::Path, id: &str) -> String {
+    engines::def(id)
+        .and_then(|d| engines::find(d, &s.engine_path(id), data))
+        .and_then(|p| p.parent().and_then(|x| x.file_name()).map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+}
+
+/// The game's record with an up-to-date analysis of its eboot.bin (reads the file if needed).
+fn ensure_record(data: &std::path::Path, g: &games::Game) -> compat::GameRecord {
+    let key = compat_key(g);
+    let mut rec = compat::load(data, &key);
+    if !g.archive && !compat::is_fresh(&rec.analysis, std::path::Path::new(&g.path)) {
+        rec.analysis = compat::analyze(std::path::Path::new(&g.path));
+        rec.title = g.title.clone();
+        rec.title_id = g.title_id.clone();
+        let _ = compat::save(data, &key, &rec);
+        logs::debug("compat", &format!("Analyzed {}: {} functions, {} libraries, engine {}", g.title, rec.analysis.imports.len(), rec.analysis.libraries.len(), if rec.analysis.game_engine.is_empty() { "?" } else { &rec.analysis.game_engine }));
+    }
+    rec
+}
+
+fn engine_scores(s: &Settings, data: &std::path::Path, g: &games::Game, rec: &compat::GameRecord, k: &compat::EngineKnowledge) -> Vec<compat::Score> {
+    engines::ENGINES
+        .iter()
+        .filter(|d| engines::supports(d, g) && (PS4_ENABLED || d.platforms.contains(&engines::Platform::Ps5)))
+        .map(|d| compat::score(d.id, &engine_release(s, data, d.id), rec, k))
+        .collect()
 }
 
 fn engine_name(id: &str) -> &'static str {
@@ -399,13 +509,14 @@ async fn launch_game(app: AppHandle, state: State<'_, AppState>, id: String) -> 
         .find(|g| g.id == id)
         .cloned()
         .ok_or("Game not found — refresh the library.")?;
-    let attempt = {
+    let mut attempt = {
         let s = state.settings.lock().unwrap();
         let entry = s.games.get(&id).cloned().unwrap_or_default();
         let platform = engines::Platform::parse(&game.platform);
         let order = if platform == engines::Platform::Ps4 { &s.engines.order_ps4 } else { &s.engines.order_ps5 };
         let installed = installed_fn(&s, &state.data);
-        let chain = engines::chain(&game, order, &entry.engine, &entry.good_engine, s.engines.auto_fallback, &installed);
+        // Full list first; it is sorted by known results below and cut to one if fallback is off.
+        let chain = engines::chain(&game, order, &entry.engine, &entry.good_engine, true, &installed);
         if chain.is_empty() {
             // The UI turns this into a friendly prompt with a Download button.
             return Err(format!("need-engine:{}", platform.as_str()));
@@ -421,9 +532,37 @@ async fn launch_game(app: AppHandle, state: State<'_, AppState>, id: String) -> 
             fail_seconds: s.engines.fail_seconds,
             failures: vec![],
             patch_file: entry.patch_file.clone(),
+            releases: vec![],
         }
     };
-    let mut attempt = attempt;
+    // Order the engines by what is known about this game (2nd launch: straight to the one that worked).
+    {
+        let forced = state.settings.lock().unwrap().games.get(&id).map(|e| !e.engine.is_empty()).unwrap_or(false);
+        let (s, data, g) = (state.settings.lock().unwrap().clone(), state.data.clone(), game.clone());
+        let chain = attempt.chain.clone();
+        let (ordered, releases) = tauri::async_runtime::spawn_blocking(move || {
+            let rec = ensure_record(&data, &g);
+            let k = compat::load_knowledge(&data);
+            let scores = engine_scores(&s, &data, &g, &rec, &k);
+            let mut chain = chain;
+            if !forced {
+                compat::order(&mut chain, &scores);
+            }
+            for sc in &scores {
+                logs::debug("compat", &format!("{}: {} ({}) — {}", engine_name(&sc.engine), sc.score, sc.label, sc.reason));
+            }
+            let releases = chain.iter().map(|e| engine_release(&s, &data, e)).collect::<Vec<_>>();
+            (chain, releases)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        attempt.chain = ordered;
+        attempt.releases = releases;
+        if !state.settings.lock().unwrap().engines.auto_fallback {
+            attempt.chain.truncate(1);
+            attempt.releases.truncate(1);
+        }
+    }
     // "Automatic" on a PC with two GPUs: the engine may pick the integrated one, so pin the best one.
     if attempt.emu.gpu_index < 0 {
         let cached = state.sys.lock().unwrap().clone();
@@ -551,6 +690,33 @@ fn on_engine_exit(app: AppHandle, a: Attempt, x: engine::ExitInfo) {
         logs::error("engine", &format!("{name}: {message}"));
     }
     let failed = engines::attempt_failed(x.code, x.seconds, a.fail_seconds, x.stopped, x.skip);
+    // Remember what happened (and what was missing) for next time and for other games.
+    let worked = !failed && x.seconds >= a.fail_seconds as u64;
+    if failed || worked {
+        let release = a.releases.get(a.idx).cloned().unwrap_or_default();
+        let key = compat_key(&a.game);
+        let mut rec = compat::load(&state.data, &key);
+        rec.title = a.game.title.clone();
+        rec.title_id = a.game.title_id.clone();
+        compat::add_attempt(&mut rec, compat::Attempt {
+            engine: id.clone(),
+            release: release.clone(),
+            when: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+            seconds: x.seconds,
+            code: x.code,
+            worked,
+            findings: x.findings.clone(),
+        });
+        let _ = compat::save(&state.data, &key, &rec);
+        if failed && !x.skip {
+            let mut k = compat::load_knowledge(&state.data);
+            compat::learn(&mut k, &id, &release, &x.findings);
+            let _ = compat::save_knowledge(&state.data, &k);
+            if !x.findings.missing_functions.is_empty() || !x.findings.missing_modules.is_empty() {
+                logs::info("compat", &format!("{name} is missing {} function(s) and {} module(s) for {}", x.findings.missing_functions.len(), x.findings.missing_modules.len(), a.game.title));
+            }
+        }
+    }
     {
         let mut s = state.settings.lock().unwrap();
         let keep = s.dev.keep_sessions.max(1) as usize;
@@ -847,6 +1013,7 @@ fn paths(state: State<AppState>) -> serde_json::Value {
         "engine": state.data.join("engine"),
         "engines": state.data.join("engines"),
         "backups": backups::backups_dir(&state.data),
+        "compat": compat::dir(&state.data),
         "shadps4_modules": engines::root_dir(&state.data, "shadps4").join("user").join("sys_modules"),
     })
 }
@@ -909,6 +1076,7 @@ pub fn run() {
             pick_folder,
             pick_file,
             open_path,
+            open_url,
             launch_game,
             stop_game,
             next_engine,
@@ -916,6 +1084,8 @@ pub fn run() {
             monitor_refresh,
             skipped_folders,
             found_pkgs,
+            game_compat,
+            compat_reset,
             pick_pkg,
             pick_patch,
             pkg_inspect,

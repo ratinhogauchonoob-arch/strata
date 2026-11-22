@@ -71,6 +71,9 @@ const S = {
 };
 const ENGINE_NAME = { kyty: "KytyPS5", sharpemu: "SharpEmu", anyps5: "AnyPS5", shadps4: "shadPS4" };
 const PS5_SET = ["kyty", "sharpemu", "anyps5"];
+// Support links. Fill these in to show the "Support Strata" buttons (About page and setup).
+const SUPPORT = { kofi: "", sponsors: "", youtube: "" };
+const SUPPORT_LABEL = { kofi: "Ko-fi", sponsors: "GitHub Sponsors", youtube: "YouTube" };
 const PS4 = () => !!S.boot?.ps4; // PS4 support is held back in this release
 const haveEngine = (platform) => S.engines.some((e) => e.path && e.platforms.includes(platform));
 
@@ -559,7 +562,7 @@ function renderPaneInner() {
         : h("button", { class: "switch", "data-nav": true, onclick: () => { e.emu = structuredClone(S.settings.emu); e.perf = structuredClone(S.settings.perf); save(); renderPane(); } })));
   }
 
-  const custom = { profile: paneProfile, ram: paneRam, library: paneLibrary, engine: paneEngines, appearance: paneAppearance, about: paneAbout, controls: paneControls, backups: paneBackups, gamedev: paneGameDev, extras: paneExtras }[sec.custom];
+  const custom = { profile: paneProfile, ram: paneRam, library: paneLibrary, engine: paneEngines, appearance: paneAppearance, about: paneAbout, controls: paneControls, backups: paneBackups, gamedev: paneGameDev, extras: paneExtras, compat: paneCompat }[sec.custom];
   if (custom) custom(pane);
   if (sec.fields) {
     const target = activeEmu();
@@ -1065,7 +1068,7 @@ function paneAbout(pane) {
       h("div", { style: { display: "flex", gap: "18px", alignItems: "center" } }, h("span", { html: MARK(), style: { width: "54px", height: "54px", display: "block" } }),
         h("div", {}, h("div", { class: "tier", style: { margin: 0 } }, "Strata"), h("div", { class: "micro" }, `Version ${S.boot.version}${S.boot.channel ? " " + S.boot.channel : ""} · ${S.boot.platform}`))),
       h("ul", { style: { marginTop: "20px" } },
-        h("li", {}, "Game engine: KytyPS5 — GPL-2.0, by its contributors (github.com/KytyPS5/KytyPS5). Based on Kyty (MIT)."),
+        h("li", {}, `Engines: KytyPS5, SharpEmu, AnyPS5${PS4() ? ", shadPS4" : ""} — each GPL-2.0, by their own contributors, downloaded from their official GitHub releases.`),
         h("li", {}, "Strata launcher — GPL-2.0. Fonts: Archivo and IBM Plex Mono (SIL Open Font License)."),
         h("li", {}, "Strata is not affiliated with, endorsed by or connected to any console maker. It ships no games, firmware or keys."),
         h("li", {}, "Only play games you dumped yourself from hardware you own."),
@@ -1073,6 +1076,53 @@ function paneAbout(pane) {
       h("div", { style: { display: "flex", gap: "10px" } },
         h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.data }); } }, "Open data folder"),
         h("button", { class: "btn small", "data-nav": true, onclick: () => { S.settings.first_run = true; save(); renderWizard(true); } }, "Run setup again"))));
+  const links = Object.entries(SUPPORT).filter(([, url]) => url);
+  if (links.length) {
+    add(pane, h("div", { class: "pcard", style: { marginTop: "18px" } },
+      h("div", { class: "tier", style: { margin: 0, fontSize: "20px" } }, "Support Strata"),
+      h("p", { class: "lead" }, "Strata is free and has no ads. If it helps you, a small donation or a follow keeps it going."),
+      h("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap" } },
+        links.map(([k, url]) => h("button", { class: "btn small" + (k === "kofi" ? " primary" : ""), "data-nav": true, onclick: () => invoke("open_url", { url }).catch((e) => toast(String(e), "err")) }, SUPPORT_LABEL[k])))));
+  }
+}
+
+// ───────────────────────── per-game compatibility ─────────────────────────
+const CHANCE = { worked: ["Worked", "ok"], failed: ["Failed", "bad"], high: ["High chance", "ok"], medium: ["Maybe", "warn"], low: ["Low chance", "bad"], unknown: ["Unknown", ""] };
+function paneCompat(pane) {
+  const g = S.games.find((x) => x.id === S.perGame);
+  const c = S.compat?.[g.id];
+  if (!c) {
+    add(pane, h("div", { class: "micro" }, "Reading the game's program…"));
+    invoke("game_compat", { id: g.id }).then((v) => { S.compat = { ...(S.compat || {}), [g.id]: v }; renderPane(); }).catch((e) => toast(String(e), "err"));
+    return;
+  }
+  const a = c.record.analysis;
+  add(pane,
+    h("div", { class: "facts" },
+      h("div", {}, h("div", { class: "micro" }, "Program"), h("div", { class: "v" }, a.readable ? `Readable (${a.format.toUpperCase()})` : a.format === "unknown" ? "Not found or unknown" : "Encrypted — not a decrypted dump")),
+      h("div", {}, h("div", { class: "micro" }, "Made with"), h("div", { class: "v" }, a.game_engine || "Unknown")),
+      h("div", {}, h("div", { class: "micro" }, "System functions used"), h("div", { class: "v" }, String(a.imports.length))),
+      h("div", {}, h("div", { class: "micro" }, "System libraries"), h("div", { class: "v" }, String(a.libraries.length))),
+      h("div", {}, h("div", { class: "micro" }, "Modules shipped with the game"), h("div", { class: "v" }, String(a.bundled.length))),
+      h("div", {}, h("div", { class: "micro" }, "Tests recorded"), h("div", { class: "v" }, String(c.record.attempts.length)))),
+    h("h4", { class: "sub" }, "Engines, best first"),
+    c.scores.map((sc) => {
+      const [label, kind] = CHANCE[sc.label] || [sc.label, ""];
+      return h("div", { class: "field" },
+        h("div", { class: "name" }, ENGINE_NAME[sc.engine] || sc.engine, h("span", { class: "chip " + kind, style: { marginLeft: "10px" } }, h("span", { class: "dot" }), label)),
+        h("div", { class: "help" }, sc.reason, sc.known_missing.length ? h("div", { class: "mono", style: { fontSize: "11px", marginTop: "4px" } }, "Missing: " + sc.known_missing.slice(0, 8).join(", ") + (sc.known_missing.length > 8 ? " …" : "")) : null),
+        h("div", { class: "ctl" }, h("span", { class: "micro" }, sc.score + " / 100")));
+    }),
+    c.record.attempts.length ? h("h4", { class: "sub" }, "Last tests") : null,
+    c.record.attempts.slice(-8).reverse().map((t) => h("div", { class: "check " + (t.worked ? "pass" : "fail") }, h("span", { class: "st" }),
+      h("div", {}, h("div", {}, `${ENGINE_NAME[t.engine] || t.engine} · ${t.worked ? "worked" : "failed"} after ${t.seconds} s`),
+        h("div", { class: "d" }, [t.release, new Date(t.when * 1000).toLocaleString(), t.findings.missing_modules.length ? "missing " + t.findings.missing_modules.join(", ") : "", t.findings.missing_functions.length ? `${t.findings.missing_functions.length} missing function(s)` : ""].filter(Boolean).join(" · "))))),
+    h("div", { style: { display: "flex", gap: "10px", marginTop: "18px", flexWrap: "wrap" } },
+      h("button", { class: "btn small", "data-nav": true, onclick: async () => {
+        try { await invoke("compat_reset", { id: g.id }); entry(g.id).good_engine = ""; delete S.compat[g.id]; renderPane(); toast("Next launch tests the engines again.", "ok"); } catch (e) { toast(String(e), "err"); }
+      } }, "Test engines again"),
+      h("button", { class: "btn small", "data-nav": true, onclick: async () => { const p = await invoke("paths"); invoke("open_path", { path: p.compat }).catch(() => toast("Nothing saved yet.", "warn")); } }, "Open compatibility files")),
+    h("p", { class: "micro", style: { textTransform: "none", letterSpacing: 0, marginTop: "14px" } }, "The first launch reads the game and tests engines; after that Strata opens it straight in the engine that worked. The file for this game can be shared with friends: " + c.file.split(/[\\/]/).pop()));
 }
 
 // ───────────────────────── developer ─────────────────────────
@@ -1351,6 +1401,7 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
   listen("game-start", (r) => { S.running = r; renderRunning(); });
   listen("game-exit", (x) => {
     S.running = null;
+    if (S.compat) delete S.compat[x.game_id];
     renderRunning();
     toast(`${S.games.find((g) => g.id === x.game_id)?.title || "Game"} — ${x.message}`, x.code && x.code !== 0 ? "err" : "ok");
     if (S.settings.games[x.game_id]) S.settings.games[x.game_id].play_seconds += x.seconds;
@@ -1363,6 +1414,7 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
     if ($("#wizard").classList.contains("show")) renderWizard(true);
   });
   listen("engine-fallback", (x) => toast(x.message, "warn"));
+  listen("compat-updated", () => { S.compat = {}; if (S.view === "settings" && S.section === "compat") renderPane(); });
   listen("pkg-progress", (p) => {
     if (p.stage !== "extracting" || !S.pkgJob) return;
     S.pkgJob = p;

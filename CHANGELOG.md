@@ -1,6 +1,9 @@
 # Changelog
 
 ## 0.10.0 Beta — 2026-11-21
+- **Smart engine choice:** Strata reads each game's `eboot.bin` (system functions, libraries, which game engine made it) in the background. When an engine fails, Strata records what it was missing; other games that need the same functions start with a better engine. After the first launch, a game opens straight in the engine that worked. Everything is kept in plain files under `data/compat` that you can share.
+- New per-game **Compatibility** page: what the game needs, a chance per engine, the last tests, and "Test engines again".
+- "Support Strata" section on the About page (shown once support links are set).
 - **Three PS5 engines:** KytyPS5, SharpEmu and AnyPS5, each downloaded from its own GitHub releases. Setup has "Download all".
 - **Automatic fallback:** when an engine closes or crashes within the first seconds, the next engine starts; every attempt is logged and the engine that worked is remembered per game. "Try next engine" while a game runs.
 - **Per-game engine** choice (or Automatic), per-game controller keys and a per-game Developer page.

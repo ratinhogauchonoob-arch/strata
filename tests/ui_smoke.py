@@ -94,6 +94,14 @@ async def main():
             await pg.click("#pane >> text=Back up now"); await pg.wait_for_timeout(400)
             if not await pg.locator("#pane >> text=Restore").count():
                 problems.append(f"[{vw}x{vh}] backup not listed")
+            step("compatibility page")
+            await pg.click("#tab-home"); await pg.wait_for_timeout(300)
+            await pg.keyboard.press("s"); await pg.wait_for_timeout(300)
+            await pg.click('.sections button >> text="Compatibility"'); await pg.wait_for_timeout(500)
+            if not await pg.locator("#pane >> text=Engines, best first").count():
+                problems.append(f"[{vw}x{vh}] compatibility page empty")
+            await pg.click("#pane >> text=Test engines again"); await pg.wait_for_timeout(400)
+            await pg.click("#tab-settings"); await pg.wait_for_timeout(200)
             if not ps4:
                 step("no PS4 in this build")
                 await pg.click("#tab-library"); await pg.wait_for_timeout(300)

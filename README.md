@@ -34,6 +34,7 @@
 | | |
 |---|---|
 | **Three engines, one Play button** | Games run on [KytyPS5](https://github.com/KytyPS5/KytyPS5), [SharpEmu](https://github.com/sharpemu/sharpemu) or [AnyPS5](https://github.com/boykopovar/AnyPS5). If an engine crashes or closes right away, the next one starts automatically and every attempt goes to the log; the engine that worked is remembered per game. |
+| **Learns which engine fits** | Reads each game's `eboot.bin` — the system functions and libraries it needs, and whether it was made with Unreal, Unity or another engine. When an engine fails, Strata notes what was missing and uses that for every other game; after the first launch a game opens straight in the engine that worked. A per-game Compatibility page shows the chance for each engine. |
 | **Tunes itself to your PC** | Reads your GPU, CPU and memory through Vulkan — the same way the engine sees them — and applies a profile. An RTX 4050 laptop starts at 1080p, an RTX 3050 at 720p. Laptops with two GPUs are pinned to the dedicated one; Intel CPUs get compatibility patches switched on. |
 | **A shelf, not a spreadsheet** | Games appear with their own cover and background art. Browse with a controller, keyboard or mouse. Favorites, play time, status and notes for every game. |
 | **Memory limit with − and +** | Decide how much RAM a game may use. *Soft* keeps physical memory under the limit and pages out the rest; *strict* closes the game if it goes over. |
@@ -103,7 +104,7 @@ The app is a Tauri 2 project: Rust backend in `src-tauri/`, plain HTML/CSS/JS fr
 
 ```bash
 # requirements: Rust (stable), Node 18+, and on Windows the MSVC build tools + WebView2
-cd src-tauri && cargo test --lib       # 46 unit tests
+cd src-tauri && cargo test --lib       # 50 unit tests
 cd .. && npx @tauri-apps/cli@^2 build  # app + NSIS installer in src-tauri/target/release
 ```
 
@@ -118,6 +119,7 @@ src-tauri/src/
   engines.rs    the four engines: detection, command lines, fallback order
   engine.rs     KytyPS5 command line, starting/watching an engine, exit codes
   controls.rs   one key map → shadPS4 / AnyPS5 control files
+  compat.rs     eboot.bin analysis, engine failure findings, per-game records, engine scores
   backups.rs    save + shader backups (zip with a manifest)
   pkginstall.rs PS4 package install (built, switched off by PS4_ENABLED in lib.rs)
   display.rs    monitor refresh rate for "Auto"
