@@ -20,6 +20,21 @@ pub fn details_line(engine_name: &str, platform: &str) -> String {
 
 /// Shows the game on a background thread (Discord may be closed: then nothing happens).
 pub fn playing(title: String, engine_name: String, platform: String, started_unix: i64) {
+    let details = details_line(&engine_name, &platform);
+    show(title, details, started_unix);
+}
+
+/// In the menus: "Browsing the library · 12 games".
+pub fn idle(games: usize, since_unix: i64) {
+    let state = match games {
+        0 => "Setting up".to_string(),
+        1 => "1 game in the library".to_string(),
+        n => format!("{n} games in the library"),
+    };
+    show("Browsing the library".into(), state, since_unix);
+}
+
+fn show(title: String, details: String, started_unix: i64) {
     if !available() {
         return;
     }
@@ -27,20 +42,25 @@ pub fn playing(title: String, engine_name: String, platform: String, started_uni
         let mut slot = CLIENT.lock().unwrap();
         if slot.is_none() {
             let mut c = DiscordIpcClient::new(APP_ID);
-            if c.connect().is_err() {
-                return; // Discord not running
+            if let Err(e) = c.connect() {
+                crate::logs::warn("discord", &format!("Discord app not reachable (is the Discord desktop app open?): {e}"));
+                return;
             }
+            crate::logs::info("discord", "Connected to Discord");
             *slot = Some(c);
         }
-        let details = details_line(&engine_name, &platform);
         let act = activity::Activity::new()
             .details(title.as_str())
             .state(details.as_str())
             .timestamps(activity::Timestamps::new().start(started_unix))
             .assets(activity::Assets::new().large_image("strata").large_text("Strata launcher"));
         if let Some(c) = slot.as_mut() {
-            if c.set_activity(act).is_err() {
-                *slot = None; // Discord was closed; reconnect next time
+            match c.set_activity(act) {
+                Ok(()) => crate::logs::info("discord", &format!("Showing \"{title}\" on Discord")),
+                Err(e) => {
+                    crate::logs::warn("discord", &format!("Discord did not accept the activity: {e}"));
+                    *slot = None; // Discord was closed; reconnect next time
+                }
             }
         }
     });

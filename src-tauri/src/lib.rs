@@ -31,6 +31,20 @@ pub const APP_CHANNEL: &str = "beta";
 /// this release while it is tested. Flip to true to turn it on everywhere.
 pub const PS4_ENABLED: bool = false;
 
+/// When Strata started (for the Discord "elapsed" timer in the menus).
+pub static STARTED_UNIX: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// Discord shows the menus when no game runs (only with "Show on Discord" on).
+fn discord_idle(state: &AppState) {
+    if state.settings.lock().unwrap().community.discord && state.running.lock().unwrap().is_none() {
+        discord::idle(state.games.lock().unwrap().len(), *STARTED_UNIX.get_or_init(now_unix));
+    }
+}
+
 pub struct AppState {
     pub data: PathBuf,
     pub settings: Arc<Mutex<Settings>>,
@@ -100,8 +114,12 @@ fn save_settings(state: State<AppState>, settings: Settings) -> Result<Settings,
     let mut new = settings;
     new.sanitize();
     logs::set_level(&new.dev.log_level);
+    let was = state.settings.lock().unwrap().community.discord;
     state.save(&new)?;
     *state.settings.lock().unwrap() = new.clone();
+    if new.community.discord != was {
+        if new.community.discord { discord_idle(&state); } else { discord::clear(); }
+    }
     logs::debug("settings", "saved");
     Ok(new)
 }
@@ -173,6 +191,7 @@ async fn scan_games(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<ga
     }
     *state.games.lock().unwrap() = list.clone();
     *state.skipped.lock().unwrap() = skipped;
+    discord_idle(&state);
     // Read new or updated games' eboot.bin in the background (first launch is then faster).
     {
         let (data, games, app2) = (state.data.clone(), list.clone(), app.clone());
@@ -763,6 +782,9 @@ fn start_attempt(app: AppHandle, mut a: Attempt) -> Result<engine::RunningInfo, 
                 if !exited_already {
                     *slot = Some(r);
                     let _ = app.emit("game-start", &info);
+                    if !state.settings.lock().unwrap().community.discord {
+                        logs::debug("discord", "Show on Discord is off (Settings → Community)");
+                    }
                     if state.settings.lock().unwrap().community.discord {
                         discord::playing(a.game.title.clone(), def.name.to_string(), a.game.platform.clone(), (info.started_ms / 1000) as i64);
                     }
@@ -861,7 +883,11 @@ fn on_engine_exit(app: AppHandle, a: Attempt, x: engine::ExitInfo) {
     } else if failed && a.chain.len() > 1 && !x.stopped {
         message = format!("{message} No other engine is left to try.");
     }
-    discord::clear();
+    if state.settings.lock().unwrap().community.discord {
+        discord::idle(state.games.lock().unwrap().len(), now_unix());
+    } else {
+        discord::clear();
+    }
     let _ = app.emit("game-exit", GameExit { game_id: x.game_id, code: x.code, seconds: x.seconds, message });
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -1154,6 +1180,7 @@ mod tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    STARTED_UNIX.get_or_init(now_unix);
     let data = settings::data_dir();
     let _ = std::fs::create_dir_all(&data);
     let settings = Settings::load(&data.join("settings.json"));

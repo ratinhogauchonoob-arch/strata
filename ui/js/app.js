@@ -1155,7 +1155,7 @@ function paneCommunity(pane) {
   add(pane,
     sw("share", "Share test results", "After a game closes, send the game, engine, result and what the engine was missing. No name, no file paths, no logs. Working games appear on the website's Compatibility page; errors help fix the engines."),
     sw("use_results", "Use everyone's results", "Download the combined results (twice a day at most) so Strata starts games with the engine that worked for other players."),
-    sw("discord", "Show on Discord", S.discordOk ? "Shows “Playing <game>” with the engine on your Discord profile while you play. Needs the Discord app open." : "Not available in this build yet.", !S.discordOk),
+    sw("discord", "Show on Discord", S.discordOk ? "Shows “Browsing the library” in the menus and the game with its engine while you play, on your Discord profile. Needs the Discord desktop app open on this PC." : "Not available in this build yet.", !S.discordOk),
     h("div", { style: { display: "flex", gap: "10px", marginTop: "18px", flexWrap: "wrap" } },
       h("button", { class: "btn small", "data-nav": true, onclick: () => invoke("open_url", { url: "https://strata.gbxstudios.com/compatibility" }).catch((e) => toast(String(e), "err")) }, "Open the compatibility list"),
       h("button", { class: "btn small ghost", "data-nav": true, onclick: () => invoke("open_url", { url: "https://strata.gbxstudios.com/legal" }).catch((e) => toast(String(e), "err")) }, "What is sent, exactly")));
