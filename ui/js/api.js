@@ -99,7 +99,7 @@ function defaults() {
     engines: { order_ps5: ["kyty", "sharpemu", "anyps5"], order_ps4: ["shadps4", "sharpemu"], auto_fallback: true, fail_seconds: 20, paths: {}, skip_ps4: false },
     controls: { enabled: false, keys: { ...MKEYS }, swap_cross_circle: false, deadzone: 8 },
     pkg_install_folder: "",
-    community: { share: false, use_results: true, asked: false, discord: false }, library_folders: ["C:/Strata/data/Games", "D:/Games"],
+    community: { share: false, use_results: true, asked: false, discord: true }, library_folders: ["C:/Strata/data/Games", "D:/Games"],
     ui: { accent1: "ember", accent2: "cobalt", boot_style: "duo", reduce_motion: false, clock_24h: true, ui_sounds: true, tv_mode: false },
     emu: {
       resolution: "1280x720", present_mode: "Mailbox", gpu_index: -1, fullscreen: false, stretch: false, hdr: false, hide_cursor: true,

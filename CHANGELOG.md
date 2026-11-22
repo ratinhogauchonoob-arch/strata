@@ -7,7 +7,7 @@
 - **Library filters:** Works / Untested / Failed and by engine; WORKS / FAILED tags on cards.
 - **Stats:** time played, most played games, engine success rates, which game engines your games use (Library → Stats).
 - **TV mode:** bigger interface for a TV and controller (F9 or Settings → Appearance).
-- **Discord Rich Presence:** "Browsing the library" in the menus and the game you play on your Discord profile (Settings → Community → Show on Discord; off by default).
+- **Discord Rich Presence:** "Browsing the library" in the menus and the game you play on your Discord profile (on by default when the Discord desktop app is open; Settings → Community to turn it off).
 - "Support Strata" section on the About page (shown once support links are set).
 - **Three PS5 engines:** KytyPS5, SharpEmu and AnyPS5, each downloaded from its own GitHub releases. Setup has "Download all".
 - **Automatic fallback:** when an engine closes or crashes within the first seconds, the next engine starts; every attempt is logged and the engine that worked is remembered per game. "Try next engine" while a game runs.

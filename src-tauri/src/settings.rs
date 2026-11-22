@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const SETTINGS_VERSION: u32 = 2;
+pub const SETTINGS_VERSION: u32 = 3;
 
 /// Engine options. Field names map 1:1 to engine command-line switches (see engine.rs).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -236,13 +236,13 @@ pub struct CommunitySettings {
     pub use_results: bool,
     /// The one-time question was answered.
     pub asked: bool,
-    /// Show "Playing <game> on Strata" in Discord.
+    /// Show "Playing <game> on Strata" in Discord (on by default; only works with the Discord app open).
     pub discord: bool,
 }
 
 impl Default for CommunitySettings {
     fn default() -> Self {
-        Self { share: false, use_results: true, asked: false, discord: false }
+        Self { share: false, use_results: true, asked: false, discord: true }
     }
 }
 
@@ -339,6 +339,10 @@ impl Settings {
 
     /// One-time changes for files written by older versions (runs before sanitize).
     pub fn migrate(&mut self) {
+        if self.version < 3 {
+            // 0.10 builds before this one shipped Discord off; it is on by default now.
+            self.community.discord = true;
+        }
         if self.version < 2 {
             // 0.9 always used 60 Hz; 0.10 matches the monitor instead.
             if self.emu.vblank_frequency == 60 {
