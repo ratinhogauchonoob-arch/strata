@@ -298,7 +298,8 @@ pub struct Score {
 }
 
 /// How likely an engine is to run a game. `release` = the installed engine release.
-pub fn score(engine: &str, release: &str, rec: &GameRecord, k: &EngineKnowledge) -> Score {
+/// `others` = how many other players this engine ran the game for (community results).
+pub fn score(engine: &str, release: &str, rec: &GameRecord, k: &EngineKnowledge, others: u32) -> Score {
     let mk = |score: u32, label: &str, reason: String, known: Vec<String>| Score { engine: engine.into(), score, label: label.into(), reason, known_missing: known };
     // 1. What happened with this very engine release on this game wins.
     if let Some(a) = rec.attempts.iter().rev().find(|a| a.engine == engine && a.release == release) {
@@ -319,7 +320,10 @@ pub fn score(engine: &str, release: &str, rec: &GameRecord, k: &EngineKnowledge)
     if !gaps.is_empty() {
         return mk(20u32.saturating_sub(gaps.len().min(15) as u32), "low", format!("Needs {} function(s) this engine is known to miss.", gaps.len()), gaps);
     }
-    // 3. An older release of this engine ran it: likely still fine.
+    // 3. It ran for other players (community results), or an older release ran it here.
+    if others > 0 {
+        return mk((70 + others.min(25)).min(95), "high", format!("Worked for {others} other player(s)."), vec![]);
+    }
     if rec.attempts.iter().any(|a| a.engine == engine && a.worked) {
         return mk(80, "high", "An earlier version of this engine ran it.".into(), vec![]);
     }
@@ -403,19 +407,23 @@ mod tests {
         let mut k = EngineKnowledge::default();
         // Another game taught us SharpEmu r1 misses qCSfqDILlns.
         learn(&mut k, "sharpemu", "r1", &Findings { missing_functions: ["qCSfqDILlns".to_string()].into(), ..Default::default() });
-        assert_eq!(score("sharpemu", "r1", &rec, &k).label, "low");
-        assert_eq!(score("sharpemu", "r1", &rec, &k).known_missing, ["qCSfqDILlns"]);
-        assert_eq!(score("sharpemu", "r2", &rec, &k).label, "medium", "a newer release may have it");
-        assert_eq!(score("kyty", "k1", &rec, &k).label, "medium");
+        assert_eq!(score("sharpemu", "r1", &rec, &k, 0).label, "low");
+        assert_eq!(score("sharpemu", "r1", &rec, &k, 0).known_missing, ["qCSfqDILlns"]);
+        assert_eq!(score("sharpemu", "r2", &rec, &k, 0).label, "medium", "a newer release may have it");
+        assert_eq!(score("kyty", "k1", &rec, &k, 0).label, "medium");
 
         add_attempt(&mut rec, Attempt { engine: "kyty".into(), release: "k1".into(), seconds: 600, worked: true, ..Default::default() });
-        assert_eq!(score("kyty", "k1", &rec, &k).label, "worked");
-        assert_eq!(score("kyty", "k2", &rec, &k).label, "high", "engine updated: still likely");
+        assert_eq!(score("kyty", "k1", &rec, &k, 0).label, "worked");
+        assert_eq!(score("kyty", "k2", &rec, &k, 0).label, "high", "engine updated: still likely");
 
         let mut chain = vec!["sharpemu".to_string(), "anyps5".to_string(), "kyty".to_string()];
-        let scores: Vec<Score> = chain.iter().map(|e| score(e, if e == "kyty" { "k1" } else { "r1" }, &rec, &k)).collect();
+        let scores: Vec<Score> = chain.iter().map(|e| score(e, if e == "kyty" { "k1" } else { "r1" }, &rec, &k, 0)).collect();
         order(&mut chain, &scores);
         assert_eq!(chain, ["kyty", "anyps5", "sharpemu"]);
+        // Community: worked for 3 other players and nothing known locally.
+        let fresh = GameRecord { analysis: rec.analysis.clone(), ..Default::default() };
+        assert_eq!(score("anyps5", "a1", &fresh, &k, 3).label, "high");
+        assert!(score("anyps5", "a1", &fresh, &k, 3).score > score("anyps5", "a1", &fresh, &k, 0).score);
 
         for i in 0..40 {
             add_attempt(&mut rec, Attempt { engine: format!("e{i}"), ..Default::default() });

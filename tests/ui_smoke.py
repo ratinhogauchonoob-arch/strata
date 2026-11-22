@@ -34,6 +34,12 @@ async def main():
             # run + stop
             step("run/stop"); await pg.click("#play"); await pg.wait_for_timeout(800)
             await pg.click("#running >> text=Stop"); await pg.wait_for_timeout(600)
+            # first game exit asks once whether to share results
+            await pg.wait_for_timeout(1300)
+            if not await pg.locator(".dialog >> text=Help everyone").count():
+                problems.append(f"[{vw}x{vh}] share question did not appear after the first game")
+            else:
+                await pg.click(".dialog >> text=No thanks"); await pg.wait_for_timeout(300)
             if await pg.locator("#running").is_visible():
                 problems.append(f"[{vw}x{vh}] running banner still visible after stop")
             # library
@@ -64,7 +70,7 @@ async def main():
             await pg.click("text=Back to global settings"); await pg.wait_for_timeout(300)
             # every settings section
             step("settings sections")
-            for name in ["This PC", "Display", "Rendering", "Performance", "System", "Controller", "Library", "Engines", "Saves & backups", "Appearance", "Developer", "About"]:
+            for name in ["This PC", "Display", "Rendering", "Performance", "System", "Controller", "Library", "Engines", "Community", "Saves & backups", "Appearance", "Developer", "About"]:
                 await pg.click(f'.sections button >> text="{name}"'); await pg.wait_for_timeout(150)
                 for sw in (await pg.locator("#pane .field:not(.disabled) .stepper button").all())[:2]:
                     await sw.click()
@@ -94,6 +100,24 @@ async def main():
             await pg.click("#pane >> text=Back up now"); await pg.wait_for_timeout(400)
             if not await pg.locator("#pane >> text=Restore").count():
                 problems.append(f"[{vw}x{vh}] backup not listed")
+            step("library filters + stats + tv")
+            await pg.click("#tab-library"); await pg.wait_for_timeout(300)
+            await pg.click('.seg button:text-is("Works")'); await pg.wait_for_timeout(200)
+            if await pg.locator(".card").count() != 1:
+                problems.append(f"[{vw}x{vh}] Works filter wrong ({await pg.locator('.card').count()})")
+            await pg.click('.seg button:text-is("All")'); await pg.click('.seg button:text-is("Stats")'); await pg.wait_for_timeout(400)
+            if not await pg.locator("#libbody >> text=Most played").count():
+                problems.append(f"[{vw}x{vh}] stats page empty")
+            await pg.click('.seg button:text-is("Grid")')
+            await pg.keyboard.press("F9"); await pg.wait_for_timeout(200)
+            if not await pg.evaluate("document.documentElement.classList.contains('tv')"):
+                problems.append(f"[{vw}x{vh}] TV mode did not turn on")
+            await pg.keyboard.press("F9"); await pg.wait_for_timeout(200)
+            step("community")
+            await pg.click("#tab-settings"); await pg.click('.sections button >> text="Community"'); await pg.wait_for_timeout(300)
+            await pg.locator("#pane .switch").first.click(); await pg.wait_for_timeout(200)
+            if not await pg.locator("#pane .switch.on").count():
+                problems.append(f"[{vw}x{vh}] share switch did not turn on")
             step("compatibility page")
             await pg.click("#tab-home"); await pg.wait_for_timeout(300)
             await pg.keyboard.press("s"); await pg.wait_for_timeout(300)
@@ -139,6 +163,10 @@ async def main():
                 await pg.click("#pane >> text=Choose file"); await pg.wait_for_timeout(300)
                 if not await pg.locator("#pane >> text=60fps.xml").count():
                     problems.append(f"[{vw}x{vh}] patch file not shown")
+            for view in ["home", "library", "settings"]:
+                await pg.click(f"#tab-{view}"); await pg.wait_for_timeout(250)
+                if await pg.evaluate("/(^|\\n)\\s*(null|undefined)\\s*(\\n|$)/.test(document.querySelector('main').innerText)"):
+                    problems.append(f"[{vw}x{vh}] the word null/undefined is printed on {view}")
             await pg.screenshot(path=f"/tmp/smoke_{vw}.png")
             await pg.close()
         await b.close()

@@ -1,8 +1,10 @@
 //! Strata — a launcher frontend. The UI lives in ../ui; this side talks to the OS and the engine.
 
 pub mod backups;
+pub mod community;
 pub mod compat;
 pub mod controls;
+pub mod discord;
 pub mod display;
 pub mod download;
 pub mod engine;
@@ -229,6 +231,91 @@ fn compat_reset(state: State<AppState>, id: String) -> Result<(), String> {
     state.save(&s)?;
     logs::info("compat", &format!("Test results for {} cleared", g.title));
     Ok(())
+}
+
+/// Per game: "worked" | "failed" | "untested" and the engine that worked (for Library filters).
+#[derive(Serialize)]
+struct GameState {
+    state: &'static str,
+    engine: String,
+}
+
+fn game_state(rec: &compat::GameRecord) -> GameState {
+    if let Some(a) = rec.attempts.iter().rev().find(|a| a.worked) {
+        GameState { state: "worked", engine: a.engine.clone() }
+    } else if !rec.attempts.is_empty() {
+        GameState { state: "failed", engine: String::new() }
+    } else {
+        GameState { state: "untested", engine: String::new() }
+    }
+}
+
+#[tauri::command]
+fn library_states(state: State<AppState>) -> std::collections::BTreeMap<String, GameState> {
+    let games = state.games.lock().unwrap().clone();
+    games.iter().map(|g| (g.id.clone(), game_state(&compat::load(&state.data, &compat_key(g))))).collect()
+}
+
+#[derive(Serialize)]
+struct TopGame {
+    id: String,
+    title: String,
+    seconds: u64,
+    launches: u32,
+}
+
+#[derive(Serialize)]
+struct Stats {
+    games: usize,
+    total_seconds: u64,
+    launches: u32,
+    worked: usize,
+    failed: usize,
+    untested: usize,
+    top: Vec<TopGame>,
+    /// engine id → (tests, times it worked)
+    engines: std::collections::BTreeMap<String, (u32, u32)>,
+    /// "Unreal Engine" → number of games
+    made_with: std::collections::BTreeMap<String, u32>,
+}
+
+#[tauri::command]
+fn stats(state: State<AppState>) -> Stats {
+    let games = state.games.lock().unwrap().clone();
+    let s = state.settings.lock().unwrap().clone();
+    let mut st = Stats { games: games.len(), total_seconds: 0, launches: 0, worked: 0, failed: 0, untested: 0, top: vec![], engines: Default::default(), made_with: Default::default() };
+    for g in &games {
+        let e = s.games.get(&g.id).cloned().unwrap_or_default();
+        st.total_seconds += e.play_seconds;
+        st.launches += e.launches;
+        if e.play_seconds > 0 || e.launches > 0 {
+            st.top.push(TopGame { id: g.id.clone(), title: g.title.clone(), seconds: e.play_seconds, launches: e.launches });
+        }
+        let rec = compat::load(&state.data, &compat_key(g));
+        match game_state(&rec).state {
+            "worked" => st.worked += 1,
+            "failed" => st.failed += 1,
+            _ => st.untested += 1,
+        }
+        for a in &rec.attempts {
+            let slot = st.engines.entry(a.engine.clone()).or_default();
+            slot.0 += 1;
+            if a.worked {
+                slot.1 += 1;
+            }
+        }
+        if !rec.analysis.game_engine.is_empty() {
+            *st.made_with.entry(rec.analysis.game_engine.clone()).or_default() += 1;
+        }
+    }
+    st.top.sort_by(|a, b| b.seconds.cmp(&a.seconds).then(b.launches.cmp(&a.launches)));
+    st.top.truncate(10);
+    st
+}
+
+#[tauri::command]
+fn discord_available() -> bool {
+    discord::available()
 }
 
 #[tauri::command]
@@ -467,10 +554,21 @@ fn ensure_record(data: &std::path::Path, g: &games::Game) -> compat::GameRecord 
 }
 
 fn engine_scores(s: &Settings, data: &std::path::Path, g: &games::Game, rec: &compat::GameRecord, k: &compat::EngineKnowledge) -> Vec<compat::Score> {
+    let mut k = k.clone();
+    let others = if s.community.use_results {
+        let ck = community::load(data);
+        community::merge_into(&mut k, &ck);
+        community::worked_for_others(&ck, &g.title_id)
+    } else {
+        vec![]
+    };
     engines::ENGINES
         .iter()
         .filter(|d| engines::supports(d, g) && (PS4_ENABLED || d.platforms.contains(&engines::Platform::Ps5)))
-        .map(|d| compat::score(d.id, &engine_release(s, data, d.id), rec, k))
+        .map(|d| {
+            let n = others.iter().find(|(e, _)| e == d.id).map(|(_, n)| *n).unwrap_or(0);
+            compat::score(d.id, &engine_release(s, data, d.id), rec, &k, n)
+        })
         .collect()
 }
 
@@ -665,6 +763,9 @@ fn start_attempt(app: AppHandle, mut a: Attempt) -> Result<engine::RunningInfo, 
                 if !exited_already {
                     *slot = Some(r);
                     let _ = app.emit("game-start", &info);
+                    if state.settings.lock().unwrap().community.discord {
+                        discord::playing(a.game.title.clone(), def.name.to_string(), a.game.platform.clone(), (info.started_ms / 1000) as i64);
+                    }
                 }
                 return Ok(info);
             }
@@ -698,7 +799,7 @@ fn on_engine_exit(app: AppHandle, a: Attempt, x: engine::ExitInfo) {
         let mut rec = compat::load(&state.data, &key);
         rec.title = a.game.title.clone();
         rec.title_id = a.game.title_id.clone();
-        compat::add_attempt(&mut rec, compat::Attempt {
+        let attempt = compat::Attempt {
             engine: id.clone(),
             release: release.clone(),
             when: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
@@ -706,8 +807,16 @@ fn on_engine_exit(app: AppHandle, a: Attempt, x: engine::ExitInfo) {
             code: x.code,
             worked,
             findings: x.findings.clone(),
-        });
+        };
+        compat::add_attempt(&mut rec, attempt.clone());
         let _ = compat::save(&state.data, &key, &rec);
+        // Opt-in: share the anonymous result (background thread, never blocks).
+        if state.settings.lock().unwrap().community.share && !x.skip {
+            let gpu = state.sys.lock().unwrap().as_ref().and_then(|s| gpu::best_gpu(&s.gpus).map(|g| g.name.clone())).unwrap_or_default();
+            if let Some(r) = community::build(&a.game, &rec, &attempt, &gpu) {
+                community::send(r);
+            }
+        }
         if failed && !x.skip {
             let mut k = compat::load_knowledge(&state.data);
             compat::learn(&mut k, &id, &release, &x.findings);
@@ -752,6 +861,7 @@ fn on_engine_exit(app: AppHandle, a: Attempt, x: engine::ExitInfo) {
     } else if failed && a.chain.len() > 1 && !x.stopped {
         message = format!("{message} No other engine is left to try.");
     }
+    discord::clear();
     let _ = app.emit("game-exit", GameExit { game_id: x.game_id, code: x.code, seconds: x.seconds, message });
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -1063,6 +1173,9 @@ pub fn run() {
         })
         .setup(move |app| {
             logs::init(&data, Some(app.handle().clone()), &settings.dev.log_level);
+            if settings.community.use_results {
+                community::refresh(data.clone());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1085,6 +1198,9 @@ pub fn run() {
             skipped_folders,
             found_pkgs,
             game_compat,
+            library_states,
+            stats,
+            discord_available,
             compat_reset,
             pick_pkg,
             pick_patch,

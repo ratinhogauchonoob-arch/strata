@@ -143,6 +143,8 @@ pub struct UiSettings {
     pub reduce_motion: bool,
     pub clock_24h: bool,
     pub ui_sounds: bool,
+    /// Big text, full screen, controller-first ("TV mode").
+    pub tv_mode: bool,
 }
 
 impl Default for UiSettings {
@@ -154,6 +156,7 @@ impl Default for UiSettings {
             reduce_motion: false,
             clock_24h: true,
             ui_sounds: true,
+            tv_mode: false,
         }
     }
 }
@@ -224,6 +227,25 @@ impl Default for ControlSettings {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CommunitySettings {
+    /// Send anonymous test results to the website (off until the user says yes).
+    pub share: bool,
+    /// Use everyone's combined results to pick engines.
+    pub use_results: bool,
+    /// The one-time question was answered.
+    pub asked: bool,
+    /// Show "Playing <game> on Strata" in Discord.
+    pub discord: bool,
+}
+
+impl Default for CommunitySettings {
+    fn default() -> Self {
+        Self { share: false, use_results: true, asked: false, discord: false }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct GameEntry {
@@ -264,6 +286,7 @@ pub struct Settings {
     pub controls: ControlSettings,
     /// Where "Install .pkg" puts games ("" = automatic: a library folder on another drive first).
     pub pkg_install_folder: String,
+    pub community: CommunitySettings,
     pub games: BTreeMap<String, GameEntry>,
 }
 
@@ -282,6 +305,7 @@ impl Default for Settings {
             engines: EngineSettings::default(),
             controls: ControlSettings::default(),
             pkg_install_folder: String::new(),
+            community: CommunitySettings::default(),
             games: BTreeMap::new(),
         }
     }

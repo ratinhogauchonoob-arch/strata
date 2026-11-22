@@ -84,6 +84,7 @@ export const SECTIONS = [
   },
   { id: "library", group: "Launcher", title: "Library", custom: "library", perGame: false, lead: "Folders Strata watches for games. Each game is a folder with eboot.bin inside, or a .zar archive." },
   { id: "engine", group: "Launcher", title: "Engines", custom: "engine", perGame: true, lead: "Strata runs games through open-source engines (all GPL-2.0), downloaded from their official GitHub releases. If one engine cannot run a game, Strata tries the next." },
+  { id: "community", group: "Launcher", title: "Community", custom: "community", perGame: false, lead: "Share results with other players and show what you play. Everything here is off unless you turn it on." },
   { id: "backups", group: "Launcher", title: "Saves & backups", custom: "backups", perGame: true, lead: "Copies game saves (and, if you want, shader caches) into one file you can put back later." },
   {
     id: "appearance", group: "Launcher", title: "Appearance", custom: "appearance", perGame: false,
@@ -93,6 +94,7 @@ export const SECTIONS = [
       { key: "ui.reduce_motion", type: "toggle", label: "Reduce motion", help: "Shorter, calmer animations." },
       { key: "ui.ui_sounds", type: "toggle", label: "Interface sounds", help: "Soft clicks when moving around." },
       { key: "ui.clock_24h", type: "toggle", label: "24-hour clock" },
+      { key: "ui.tv_mode", type: "toggle", label: "TV mode", help: "Bigger text and controls for playing on a TV with a controller. F9 turns it on and off." },
     ],
   },
   {

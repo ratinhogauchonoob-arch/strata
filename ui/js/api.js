@@ -98,8 +98,9 @@ function defaults() {
     version: 2, first_run: true, engine_path: "",
     engines: { order_ps5: ["kyty", "sharpemu", "anyps5"], order_ps4: ["shadps4", "sharpemu"], auto_fallback: true, fail_seconds: 20, paths: {}, skip_ps4: false },
     controls: { enabled: false, keys: { ...MKEYS }, swap_cross_circle: false, deadzone: 8 },
-    pkg_install_folder: "", library_folders: ["C:/Strata/data/Games", "D:/Games"],
-    ui: { accent1: "ember", accent2: "cobalt", boot_style: "duo", reduce_motion: false, clock_24h: true, ui_sounds: true },
+    pkg_install_folder: "",
+    community: { share: false, use_results: true, asked: false, discord: false }, library_folders: ["C:/Strata/data/Games", "D:/Games"],
+    ui: { accent1: "ember", accent2: "cobalt", boot_style: "duo", reduce_motion: false, clock_24h: true, ui_sounds: true, tv_mode: false },
     emu: {
       resolution: "1280x720", present_mode: "Mailbox", gpu_index: -1, fullscreen: false, stretch: false, hdr: false, hide_cursor: true,
       vblank_frequency: 0, shader_cache: true, relaxed_shader_float: false, readback_linear: false, readback_tiled: false,
@@ -206,6 +207,9 @@ async function mock(cmd, a) {
       scores: [{ engine: "kyty", score: 100, label: "worked", reason: "Ran this game for 412 s last time.", known_missing: [] }, { engine: "anyps5", score: 60, label: "medium", reason: "No known gaps for the 1240 functions this game uses.", known_missing: [] }, { engine: "sharpemu", score: 5, label: "failed", reason: "Closed after 6 s last time (missing function qCSfqDILlns).", known_missing: ["qCSfqDILlns"] }] };
     case "compat_reset": return null;
     case "open_url": return null;
+    case "library_states": return Object.fromEntries(demoGames.map((g, i) => [g.id, i === 1 ? { state: "worked", engine: "kyty" } : i === 3 ? { state: "failed", engine: "" } : { state: "untested", engine: "" }]));
+    case "stats": return { games: 7, total_seconds: 98000, launches: 21, worked: 1, failed: 1, untested: 5, top: demoGames.slice(0, 5).map((g, i) => ({ id: g.id, title: g.title, seconds: (5 - i) * 9000, launches: 5 - i })), engines: { kyty: [6, 4], sharpemu: [3, 1] }, made_with: { "Unreal Engine": 3, Unity: 2 } };
+    case "discord_available": return false;
     case "backup_list": return mBackups;
     case "backup_create": {
       const g = demoGames.find((x) => x.id === a.gameId);

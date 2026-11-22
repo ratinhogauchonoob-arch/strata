@@ -30,3 +30,8 @@
 - engine.rs feeds every log line to compat::scan_line → Findings in ExitInfo; on_engine_exit records Attempt and learns missing NIDs per engine release (engines.json).
 - launch_game sorts the chain by compat::score (worked=100 > high > medium > low > failed); forced engine keeps order; fallback-off truncates after sorting.
 - SUPPORT links in app.js (empty = hidden). open_url only allows ko-fi/github/youtube/paypal/strata site.
+
+## Community / Discord / UI extras
+- community.rs: Report built from Attempt (title id must match AAAA00000, release must be a plain folder name); send() and refresh() run on threads; community.json cached 12 h; merged into scoring (others>0 → "high").
+- Site API: POST /api/compat/report (throttle 60/h), GET /api/compat/knowledge. Public /compatibility shows worked only; /admin/compatibility shows errors.
+- discord.rs APP_ID empty = off. Settings: community.{share,use_results,asked,discord}, ui.tv_mode (html.tv zoom 1.32, F9).

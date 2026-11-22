@@ -67,6 +67,8 @@ const S = {
   pkgs: [], // loose .pkg files found in the library folders
   pkgJob: null, // install progress
   extras: {}, // game id -> update/DLC/mods
+  states: {}, // game id -> { state: worked|failed|untested, engine }
+  stats: null,
   sizes: {},
 };
 const ENGINE_NAME = { kyty: "KytyPS5", sharpemu: "SharpEmu", anyps5: "AnyPS5", shadps4: "shadPS4" };
@@ -146,6 +148,7 @@ function applyTheme() {
   document.documentElement.style.setProperty("--a1", PALETTE[u.accent1] || PALETTE.ember);
   document.documentElement.style.setProperty("--a2", PALETTE[u.accent2] || PALETTE.cobalt);
   document.body.classList.toggle("reduce-motion", u.reduce_motion);
+  document.documentElement.classList.toggle("tv", !!u.tv_mode);
   nav.setSounds(u.ui_sounds);
 }
 
@@ -192,8 +195,8 @@ function clock() {
 function renderHints() {
   const k = (key, text) => h("span", {}, h("span", { class: "k" }, key), text);
   const items = {
-    home: [k("↵", "Play"), k("I", "Details"), k("F", "Favorite"), k("S", "Game settings")],
-    library: [k("↵", "Open"), k("/", "Search"), k("F", "Favorite")],
+    home: [k("↵", "Play"), k("I", "Details"), k("F", "Favorite"), k("S", "Game settings"), k("F9", "TV mode")],
+    library: [k("↵", "Open"), k("/", "Search"), k("F", "Favorite"), k("F9", "TV mode")],
     settings: [k("↵", "Change"), k("←→", "Adjust"), k("Esc", "Back")],
     dev: [k("T", "Run tests"), k("C", "Clear log")],
   }[S.view] || [];
@@ -320,8 +323,10 @@ function filteredGames() {
       if (S.lib.filter === "fav") return e.favorite;
       if (S.lib.filter === "recent") return e.last_played;
       if (S.lib.filter === "playable") return e.status === "playable";
+      if (["worked", "failed", "untested"].includes(S.lib.filter)) return (S.states[g.id]?.state || "untested") === S.lib.filter;
       return true;
     })
+    .filter((g) => !S.lib.engine || S.states[g.id]?.engine === S.lib.engine)
     .sort((a, b) => S.lib.filter === "recent"
       ? (S.settings.games[b.id]?.last_played || 0) - (S.settings.games[a.id]?.last_played || 0)
       : a.title.localeCompare(b.title));
@@ -335,24 +340,60 @@ function renderLibrary() {
   const search = h("input", { class: "search", id: "search", placeholder: "Search title or ID", value: S.lib.q, "data-nav": true, spellcheck: "false" });
   search.addEventListener("input", () => { S.lib.q = search.value; renderLibraryBody(); });
 
-  root.replaceChildren(
+  root.replaceChildren(...[
     h("div", { class: "page-head" },
       h("div", {}, h("div", { class: "micro" }, `${S.games.length} games · ${S.settings.library_folders.length} folders`), h("h2", {}, "Library")),
       h("div", { class: "tools" },
         search,
-        seg("filter", [["all", "All"], ["fav", "Favorites"], ["recent", "Recent"], ["playable", "Playable"]]),
-        seg("layout", [["grid", "Grid"], ["list", "List"]]),
+        seg("filter", [["all", "All"], ["fav", "Favorites"], ["recent", "Recent"], ["worked", "Works"], ["untested", "Untested"], ["failed", "Failed"]]),
+        engineFilter(),
+        seg("layout", [["grid", "Grid"], ["list", "List"], ["stats", "Stats"]]),
         PS4() ? h("button", { class: "btn small", "data-nav": true, onclick: () => installPkg() }, "Install .pkg") : null,
         h("button", { class: "btn small", "data-nav": true, onclick: refresh }, "Refresh"))),
     PS4() ? pkgBanner() : null,
-    h("div", { class: "scroll", id: "libbody" }));
+    h("div", { class: "scroll", id: "libbody" })].filter(Boolean));
   renderLibraryBody(list);
+}
+
+function engineFilter() {
+  const sel = h("select", { "data-nav": true, title: "Engine that ran the game" },
+    h("option", { value: "", selected: !S.lib.engine }, "Any engine"),
+    S.engines.filter((e) => e.platforms.includes("ps5") || PS4()).map((e) => h("option", { value: e.id, selected: S.lib.engine === e.id }, e.name)));
+  sel.addEventListener("change", () => { S.lib.engine = sel.value; renderLibraryBody(); });
+  return h("div", { class: "select small" }, sel);
+}
+
+async function loadStates() {
+  try { S.states = await invoke("library_states"); } catch { S.states = {}; }
+}
+
+function renderStats(body) {
+  const st = S.stats;
+  if (!st) { body.append(h("div", { class: "micro" }, "Counting…")); invoke("stats").then((x) => { S.stats = x; if (S.lib.layout === "stats") renderLibraryBody(); }); return; }
+  const hours = (sec) => sec >= 3600 ? `${(sec / 3600).toFixed(1)} h` : `${Math.round(sec / 60)} min`;
+  const tile = (label, value, sub) => h("div", { class: "stat" }, h("div", { class: "micro" }, label), h("div", { class: "big" }, value), sub ? h("div", { class: "micro sub" }, sub) : null);
+  const max = Math.max(1, ...st.top.map((t) => t.seconds));
+  const engines = Object.entries(st.engines).sort((a, b) => b[1][1] - a[1][1]);
+  add(body,
+    h("div", { class: "stats-row" },
+      tile("Time played", hours(st.total_seconds), `${st.launches} launches`),
+      tile("Games", String(st.games), `${st.worked} work · ${st.failed} failed · ${st.untested} untested`),
+      tile("Most used engine", engines[0] ? (ENGINE_NAME[engines[0][0]] || engines[0][0]) : "—", engines[0] ? `${engines[0][1][1]} of ${engines[0][1][0]} tests worked` : "Play a game to see it"),
+      tile("Made with", Object.keys(st.made_with).length ? Object.entries(st.made_with).sort((a, b) => b[1] - a[1])[0][0] : "—", Object.entries(st.made_with).map(([k, v]) => `${k} ${v}`).join(" · "))),
+    h("h4", { class: "sub" }, "Most played"),
+    st.top.length ? h("div", { class: "bars" }, st.top.map((t) => h("button", { class: "bar", "data-nav": true, onclick: () => openDrawer(t.id) },
+      h("span", { class: "t" }, t.title), h("span", { class: "track" }, h("span", { style: { width: Math.max(3, (t.seconds / max) * 100) + "%" } })), h("span", { class: "v mono" }, hours(t.seconds)))))
+      : h("div", { class: "micro" }, "Nothing played yet."),
+    engines.length ? h("h4", { class: "sub" }, "Engines") : null,
+    engines.map(([id, [tests, ok]]) => h("div", { class: "field" }, h("div", { class: "name" }, ENGINE_NAME[id] || id), h("div", { class: "help" }, `${ok} of ${tests} tests worked`),
+      h("div", { class: "ctl" }, h("span", { class: "micro" }, Math.round((ok / Math.max(1, tests)) * 100) + "%")))));
 }
 
 function renderLibraryBody(list = filteredGames()) {
   const body = $("#libbody");
   if (!body) return;
   body.replaceChildren();
+  if (S.lib.layout === "stats") return renderStats(body);
   if (!list.length) {
     body.append(h("div", { class: "banner" }, S.games.length ? "Nothing matches." : "No games yet. Add a folder in Settings → Library.",
       h("button", { class: "btn small", "data-nav": true, onclick: addFolder }, "Add folder")));
@@ -366,7 +407,8 @@ function renderLibraryBody(list = filteredGames()) {
           g.icon ? h("img", { src: fileSrc(g.icon), alt: "", loading: "lazy" }) : h("div", { class: "ph" }, initials(g.title)),
           e.status && e.status !== "unknown" ? h("span", { class: "badge " + e.status }, STATUS[e.status]) : null),
         h("div", { class: "t" }, g.title),
-        h("div", { class: "s micro" }, g.archive ? "ZAR archive" : g.title_id || "—", g.platform === "ps4" ? h("span", { class: "plat ps4" }, "PS4") : null));
+        h("div", { class: "s micro" }, g.archive ? "ZAR archive" : g.title_id || "—", g.platform === "ps4" ? h("span", { class: "plat ps4" }, "PS4") : null,
+          S.states[g.id]?.state === "worked" ? h("span", { class: "plat works", title: "Ran with " + (ENGINE_NAME[S.states[g.id].engine] || "") }, "WORKS") : S.states[g.id]?.state === "failed" ? h("span", { class: "plat failed" }, "FAILED") : null));
     })));
   } else {
     body.append(h("div", { class: "list" },
@@ -562,7 +604,7 @@ function renderPaneInner() {
         : h("button", { class: "switch", "data-nav": true, onclick: () => { e.emu = structuredClone(S.settings.emu); e.perf = structuredClone(S.settings.perf); save(); renderPane(); } })));
   }
 
-  const custom = { profile: paneProfile, ram: paneRam, library: paneLibrary, engine: paneEngines, appearance: paneAppearance, about: paneAbout, controls: paneControls, backups: paneBackups, gamedev: paneGameDev, extras: paneExtras, compat: paneCompat }[sec.custom];
+  const custom = { profile: paneProfile, ram: paneRam, library: paneLibrary, engine: paneEngines, appearance: paneAppearance, about: paneAbout, controls: paneControls, backups: paneBackups, gamedev: paneGameDev, extras: paneExtras, compat: paneCompat, community: paneCommunity }[sec.custom];
   if (custom) custom(pane);
   if (sec.fields) {
     const target = activeEmu();
@@ -1086,6 +1128,39 @@ function paneAbout(pane) {
   }
 }
 
+// ───────────────────────── community, Discord, TV mode ─────────────────────────
+function toggleTv() {
+  S.settings.ui.tv_mode = !S.settings.ui.tv_mode;
+  applyTheme(); save();
+  if (S.settings.ui.tv_mode) win.fullscreen();
+  toast(S.settings.ui.tv_mode ? "TV mode on (F9 to leave)." : "TV mode off.", "ok");
+  if (S.view === "settings") renderPane();
+}
+
+async function askShare() {
+  if (S.settings.community.asked || document.querySelector(".dialog")) return;
+  const yes = await ask("Help everyone find working games?",
+    "Strata can send an anonymous result after you play: the game, the engine, whether it worked and what the engine was missing. No name, no files, no logs. Games that work appear on strata.gbxstudios.com/compatibility. You can change this any time in Settings → Community.",
+    "Share results", "No thanks");
+  S.settings.community.asked = true;
+  S.settings.community.share = !!yes;
+  save();
+  toast(yes ? "Thanks! Results will be shared." : "Okay, nothing will be sent.", "ok");
+}
+
+function paneCommunity(pane) {
+  const c = S.settings.community;
+  const sw = (key, label, help, disabled = false) => h("div", { class: "field" + (disabled ? " disabled" : "") }, h("div", { class: "name" }, label), h("div", { class: "help" }, help),
+    h("div", { class: "ctl" }, h("button", { class: "switch" + (c[key] ? " on" : ""), "data-nav": true, onclick: () => { if (disabled) return; c[key] = !c[key]; if (key === "share") c.asked = true; save(); renderPane(); } })));
+  add(pane,
+    sw("share", "Share test results", "After a game closes, send the game, engine, result and what the engine was missing. No name, no file paths, no logs. Working games appear on the website's Compatibility page; errors help fix the engines."),
+    sw("use_results", "Use everyone's results", "Download the combined results (twice a day at most) so Strata starts games with the engine that worked for other players."),
+    sw("discord", "Show on Discord", S.discordOk ? "Shows “Playing <game>” with the engine on your Discord profile while you play. Needs the Discord app open." : "Not available in this build yet.", !S.discordOk),
+    h("div", { style: { display: "flex", gap: "10px", marginTop: "18px", flexWrap: "wrap" } },
+      h("button", { class: "btn small", "data-nav": true, onclick: () => invoke("open_url", { url: "https://strata.gbxstudios.com/compatibility" }).catch((e) => toast(String(e), "err")) }, "Open the compatibility list"),
+      h("button", { class: "btn small ghost", "data-nav": true, onclick: () => invoke("open_url", { url: "https://strata.gbxstudios.com/legal" }).catch((e) => toast(String(e), "err")) }, "What is sent, exactly")));
+}
+
 // ───────────────────────── per-game compatibility ─────────────────────────
 const CHANCE = { worked: ["Worked", "ok"], failed: ["Failed", "bad"], high: ["High chance", "ok"], medium: ["Maybe", "warn"], low: ["Low chance", "bad"], unknown: ["Unknown", ""] };
 function paneCompat(pane) {
@@ -1339,6 +1414,8 @@ async function refresh() {
   try {
     S.games = await invoke("scan_games");
     S.pkgs = await invoke("found_pkgs").catch(() => []);
+    await loadStates();
+    S.stats = null;
   } catch (e) { toast(String(e), "err"); }
   if (S.view === "home") renderHome();
   if (S.view === "library") renderLibrary();
@@ -1365,6 +1442,7 @@ nav.on("menu", () => { S.perGame = null; go(S.view === "settings" ? "home" : "se
 nav.on("action", (e) => {
   const k = (e.key || "").toLowerCase();
   if (k === "f11") { win.fullscreen(); return true; }
+  if (k === "f9") { toggleTv(); return true; }
   if (k === "f5") { refresh(); return true; }
   const games = sortedGames();
   if (S.view === "home" && games.length && !drawerFor) {
@@ -1402,6 +1480,9 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
   listen("game-exit", (x) => {
     S.running = null;
     if (S.compat) delete S.compat[x.game_id];
+    S.stats = null;
+    loadStates().then(() => { if (S.view === "library") renderLibraryBody(); });
+    if (!S.settings.community.asked) setTimeout(askShare, 1200);
     renderRunning();
     toast(`${S.games.find((g) => g.id === x.game_id)?.title || "Game"} — ${x.message}`, x.code && x.code !== 0 ? "err" : "ok");
     if (S.settings.games[x.game_id]) S.settings.games[x.game_id].play_seconds += x.seconds;
@@ -1431,6 +1512,8 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
   ]);
   S.games = games;
   S.pkgs = await invoke("found_pkgs").catch(() => []);
+  await loadStates();
+  S.discordOk = await invoke("discord_available").catch(() => false);
   S.profile = await invoke("auto_profile").catch(() => null);
   S.loaded = true;
   log("info", `UI ready · ${S.games.length} games · engines: ${S.engines.filter((e) => e.path).map((e) => e.name).join(", ") || "none"}`);
