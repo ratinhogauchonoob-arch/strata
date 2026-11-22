@@ -5,7 +5,7 @@ use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
 use std::sync::Mutex;
 
 /// Application ID from discord.com/developers (public; safe to ship). Empty = feature off.
-pub const APP_ID: &str = "";
+pub const APP_ID: &str = "1574113742936084731";
 
 static CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 
