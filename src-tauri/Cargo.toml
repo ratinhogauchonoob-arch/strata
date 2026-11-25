@@ -24,6 +24,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 orbis-pkg-util = { version = "0.1", default-features = false }
 orbis-pkg = "0.1"
 memmap2 = "0.9"
+memchr = "2"
 discord-rich-presence = "1"
 base64 = "0.22"
 time = { version = "0.3", features = ["local-offset", "formatting", "macros"] }

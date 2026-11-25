@@ -1147,7 +1147,7 @@ function toggleTv() {
 async function askShare() {
   if (S.settings.community.asked || document.querySelector(".dialog")) return;
   const yes = await ask("Help everyone find working games?",
-    "Strata can send an anonymous result after you play: the game, the engine, whether it worked and what the engine was missing. No name, no files, no logs. Games that work appear on strata.gbxstudios.com/compatibility. You can change this any time in Settings → Community.",
+    "Strata can send an anonymous result after you play: the game, the engine, whether it worked, what the engine was missing and its error message (file paths removed). No name, no files, no logs. Games that work appear on strata.gbxstudios.com/compatibility. You can change this any time in Settings → Community.",
     "Share results", "No thanks");
   S.settings.community.asked = true;
   S.settings.community.share = !!yes;
@@ -1160,7 +1160,7 @@ function paneCommunity(pane) {
   const sw = (key, label, help, disabled = false) => h("div", { class: "field" + (disabled ? " disabled" : "") }, h("div", { class: "name" }, label), h("div", { class: "help" }, help),
     h("div", { class: "ctl" }, h("button", { class: "switch" + (c[key] ? " on" : ""), "data-nav": true, onclick: () => { if (disabled) return; c[key] = !c[key]; if (key === "share") c.asked = true; save(); renderPane(); } })));
   add(pane,
-    sw("share", "Share test results", "After a game closes, send the game, engine, result and what the engine was missing. No name, no file paths, no logs. Working games appear on the website's Compatibility page; errors help fix the engines."),
+    sw("share", "Share test results", "After a game closes, send the game, engine, result, what the engine was missing and its error message (file paths and quoted text removed). No name, no logs. Working games appear on the website's Compatibility page; errors help fix the engines."),
     sw("use_results", "Use everyone's results", "Download the combined results (twice a day at most) so Strata starts games with the engine that worked for other players."),
     sw("discord", "Show on Discord", S.discordOk ? "Shows “Browsing the library” in the menus and the game with its engine while you play, on your Discord profile. Needs the Discord desktop app open on this PC." : "Not available in this build yet.", !S.discordOk),
     h("div", { style: { display: "flex", gap: "10px", marginTop: "18px", flexWrap: "wrap" } },
@@ -1198,7 +1198,8 @@ function paneCompat(pane) {
     c.record.attempts.length ? h("h4", { class: "sub" }, "Last tests") : null,
     c.record.attempts.slice(-8).reverse().map((t) => h("div", { class: "check " + (t.worked ? "pass" : "fail") }, h("span", { class: "st" }),
       h("div", {}, h("div", {}, `${ENGINE_NAME[t.engine] || t.engine} · ${t.worked ? "worked" : "failed"} after ${t.seconds} s`),
-        h("div", { class: "d" }, [t.release, new Date(t.when * 1000).toLocaleString(), t.findings.missing_modules.length ? "missing " + t.findings.missing_modules.join(", ") : "", t.findings.missing_functions.length ? `${t.findings.missing_functions.length} missing function(s)` : ""].filter(Boolean).join(" · "))))),
+        h("div", { class: "d" }, [t.release, new Date(t.when * 1000).toLocaleString(), t.findings.missing_modules.length ? "missing " + t.findings.missing_modules.join(", ") : "", t.findings.missing_functions.length ? `${t.findings.missing_functions.length} missing function(s)` : ""].filter(Boolean).join(" · ")),
+          t.findings.reason ? h("div", { class: "d reason", "data-notr": true }, t.findings.reason) : null))),
     h("div", { style: { display: "flex", gap: "10px", marginTop: "18px", flexWrap: "wrap" } },
       h("button", { class: "btn small", "data-nav": true, onclick: async () => {
         try { await invoke("compat_reset", { id: g.id }); entry(g.id).good_engine = ""; delete S.compat[g.id]; renderPane(); toast("Next launch tests the engines again.", "ok"); } catch (e) { toast(String(e), "err"); }
@@ -1274,7 +1275,12 @@ function appendLog(l) {
   if (seenSeq.has(l.seq)) return;
   seenSeq.add(l.seq);
   logBuf.push(l);
-  if (logBuf.length > 4000) logBuf.splice(0, logBuf.length - 4000);
+  if (logBuf.length > 4000) {
+    logBuf.splice(0, logBuf.length - 4000);
+    // Keep the "already seen" set as small as the buffer, or it grows for as long as a game runs.
+    seenSeq.clear();
+    for (const x of logBuf) seenSeq.add(x.seq);
+  }
   S.logSeq = Math.max(S.logSeq, l.seq);
   if (S.view !== "dev") return;
   const box = $("#loglines");
@@ -1420,6 +1426,7 @@ function renderWizard(force = false) {
 async function refresh() {
   try {
     S.games = await invoke("scan_games");
+    i18n.protect(S.games.map((g) => g.title));
     S.pkgs = await invoke("found_pkgs").catch(() => []);
     await loadStates();
     S.stats = null;
@@ -1519,6 +1526,7 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
     invoke("logs_since", { seq: 0 }).then((ls) => ls.forEach(appendLog)).catch(() => null),
   ]);
   S.games = games;
+  i18n.protect(games.map((g) => g.title));
   S.pkgs = await invoke("found_pkgs").catch(() => []);
   await loadStates();
   S.discordOk = await invoke("discord_available").catch(() => false);
@@ -1538,7 +1546,13 @@ async function checkUpdate() {
   S.update = u;
   if (u.available) {
     log("info", `Strata ${u.latest} is available (this is ${u.current}).`);
-    toast(`Strata ${u.latest.replace(/^v/, "")} is out. Click "Update" at the top.`, "ok");
+    // The chip stays at the top; the pop-up only once per new version.
+    let seen = null;
+    try { seen = localStorage.getItem("strata.updateSeen"); } catch { /* storage off */ }
+    if (seen !== u.latest) {
+      toast(`Strata ${u.latest.replace(/^v/, "")} is out. Click "Update" at the top.`, "ok");
+      try { localStorage.setItem("strata.updateSeen", u.latest); } catch { /* storage off */ }
+    }
     renderTop();
   }
 }

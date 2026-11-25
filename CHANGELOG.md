@@ -5,6 +5,16 @@
 - **Update notice:** Strata checks its GitHub releases at start and shows “Update” at the top when a new version is out (Settings → Appearance to turn it off).
 - **Process priority: Automatic** (new default) uses High on laptops and PCs with 16 GB of RAM or less, where the engine needs all the CPU it can get.
 - **Resolution** now also sets SharpEmu's window size, not only KytyPS5's.
+- Fixed: after a long session the Strata window could show “Out of Memory”. Engines print thousands of lines a second; now at most 60 a second reach the window (the session log still has every line) and the window no longer keeps an endless list.
+- Fixed: engine log lines showed color codes as boxes and “[36m” in the Developer tab.
+- **Why an engine stopped:** Strata now reads the engine's own fatal message (KytyPS5's “--- Fatal Error ---”, SharpEmu's “Process terminated.”, AnyPS5's “FATAL:”) and shows it in the game's Compatibility page and when a game closes. Exit codes are explained in words (321 = KytyPS5 fatal error, 0x80131623 = SharpEmu stopped itself, 0xC0000006 = the game files could not be read).
+- “Share test results” also sends that message, with file paths and anything in quotes removed on your PC first.
+- Fixed: “Made with” said **Decima** for Minecraft (the word “Decimal” in its program matched). Engine names now need a whole word; Minecraft shows **Bedrock**. Games are read again once after updating.
+- Fixed: a session log could grow to several GB with “Capture engine log” on; it now stops at 256 MB (the game keeps running). Daily app logs older than 14 days are removed.
+- Fixed: without the Discord app open, every game start and exit wrote a warning; now it warns once.
+- Fixed: a game ID with an accented letter could crash the result sharing.
+- Game names are never translated (a game called “Control” stays “Control”), and engine log lines stay as the engine wrote them.
+- The “new version” pop-up shows once per version; the “Update” button stays at the top.
 - Fixed: SharpEmu and AnyPS5 always opened in fullscreen even with **Fullscreen** off. Strata now tells every engine whether to open in a window or fullscreen (F11 still switches while playing).
 
 ## 0.10.0 Beta — 2026-11-21

@@ -812,7 +812,7 @@ fn on_engine_exit(app: AppHandle, a: Attempt, x: engine::ExitInfo) {
     let state = app.state::<AppState>();
     let id = a.chain[a.idx].clone();
     let name = engine_name(&id);
-    let mut message = engine::explain_exit(x.code);
+    let mut message = engine::explain_exit_with(x.code, &x.findings.reason);
     if x.code.unwrap_or(0) == 0 {
         logs::info("engine", &format!("{name}: {message}"));
     } else {
@@ -873,7 +873,14 @@ fn on_engine_exit(app: AppHandle, a: Attempt, x: engine::ExitInfo) {
     }
     if failed && a.idx + 1 < a.chain.len() {
         let next_name = engine_name(&a.chain[a.idx + 1]);
-        let why = if x.skip { "skipped".to_string() } else { format!("closed after {} s", x.seconds) };
+        let why = if x.skip {
+            "skipped".to_string()
+        } else if x.findings.reason.is_empty() {
+            format!("closed after {} s", x.seconds)
+        } else {
+            let r: String = x.findings.reason.chars().take(90).collect();
+            format!("closed after {} s ({r})", x.seconds)
+        };
         let msg = format!("{name} {why} — trying {next_name}…");
         logs::warn("engine", &msg);
         let _ = app.emit("engine-fallback", EngineEvent { game_id: x.game_id.clone(), message: msg });

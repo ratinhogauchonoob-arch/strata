@@ -2,7 +2,11 @@
 //! Talks to the Discord app on this PC over its local pipe; nothing goes through Strata's servers.
 
 use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+
+/// The "Discord is not open" note is a warning once, then quiet: most players simply don't run it.
+static WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Application ID from discord.com/developers (public; safe to ship). Empty = feature off.
 pub const APP_ID: &str = "1574113742936084731";
@@ -39,13 +43,19 @@ fn show(title: String, details: String, started_unix: i64) {
         return;
     }
     std::thread::spawn(move || {
-        let mut slot = CLIENT.lock().unwrap();
+        let mut slot = CLIENT.lock().unwrap_or_else(|e| e.into_inner());
         if slot.is_none() {
             let mut c = DiscordIpcClient::new(APP_ID);
             if let Err(e) = c.connect() {
-                crate::logs::warn("discord", &format!("Discord app not reachable (is the Discord desktop app open?): {e}"));
+                let msg = format!("Discord app not reachable (is the Discord desktop app open?): {e}");
+                if WARNED.swap(true, Ordering::Relaxed) {
+                    crate::logs::debug("discord", &msg);
+                } else {
+                    crate::logs::warn("discord", &msg);
+                }
                 return;
             }
+            WARNED.store(false, Ordering::Relaxed);
             crate::logs::info("discord", "Connected to Discord");
             *slot = Some(c);
         }
@@ -71,7 +81,7 @@ pub fn clear() {
         return;
     }
     std::thread::spawn(|| {
-        let mut slot = CLIENT.lock().unwrap();
+        let mut slot = CLIENT.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(c) = slot.as_mut() {
             let _ = c.clear_activity();
             let _ = c.close();

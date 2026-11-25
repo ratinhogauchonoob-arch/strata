@@ -5,7 +5,7 @@ use crate::logs;
 use crate::settings::{DevSettings, EmuSettings, PerfSettings};
 
 use serde::Serialize;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -296,15 +296,12 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
 
     let safe_title: String = req.title.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).take(40).collect();
     let session_path = logs_dir.join(format!("session-{}-{}.log", logs::stamp(), safe_title));
-    let session = Arc::new(Mutex::new(std::fs::File::create(&session_path).ok()));
+    let session = Arc::new(Mutex::new(logs::CappedFile::create(&session_path, 256 << 20)));
     let findings = Arc::new(Mutex::new(crate::compat::Findings::default()));
-    if let Some(f) = session.lock().unwrap().as_mut() {
-        let _ = writeln!(
-            f,
-            "# Strata session log\n# game: {}\n# engine: {} (attempt {} of {})\n# command: {}\n",
-            req.title, req.engine_name, req.attempt, req.attempts, command
-        );
-    }
+    session.lock().unwrap().always(&format!(
+        "# Strata session log\n# game: {}\n# engine: {} (attempt {} of {})\n# command: {}\n",
+        req.title, req.engine_name, req.attempt, req.attempts, command
+    ));
 
     let mut cmd = Command::new(&plan.program);
     cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -326,12 +323,14 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
         logs::info("perf", n);
     }
 
+    let throttle = Arc::new(Mutex::new(logs::Throttle::new(60)));
     for (pipe, is_err) in [(child.stdout.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>), false),
                            (child.stderr.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>), true)]
     {
         let Some(pipe) = pipe else { continue };
         let session = session.clone();
         let findings = findings.clone();
+        let throttle = throttle.clone();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(pipe);
             let mut buf = Vec::new();
@@ -345,13 +344,17 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
                         if line.is_empty() {
                             continue;
                         }
-                        if let Some(f) = session.lock().unwrap().as_mut() {
-                            let _ = writeln!(f, "{line}");
-                        }
+                        session.lock().unwrap().line(line);
                         crate::compat::scan_line(line, &mut findings.lock().unwrap());
-                        let level = if is_err { "warn" } else { logs::classify(line) };
-                        let level = if logs::classify(line) == "error" { "error" } else { level };
-                        logs::log(level, "engine", line);
+                        let (show, skipped) = throttle.lock().unwrap().allow();
+                        if let Some(n) = skipped {
+                            logs::log("info", "engine", &format!("… {n} more engine lines in the last second (all of them are in the session log)"));
+                        }
+                        if show {
+                            let level = if is_err { "warn" } else { logs::classify(line) };
+                            let level = if logs::classify(line) == "error" { "error" } else { level };
+                            logs::log(level, "engine", line);
+                        }
                     }
                 }
             }
@@ -380,9 +383,7 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
                 }
             };
             let seconds = started.elapsed().as_secs();
-            if let Some(f) = session.lock().unwrap().as_mut() {
-                let _ = writeln!(f, "\n# exited with code {code:?} after {seconds} s");
-            }
+            session.lock().unwrap().always(&format!("\n# exited with code {code:?} after {seconds} s"));
             use std::sync::atomic::Ordering::SeqCst;
             // Give the log readers a moment to finish the last lines.
             std::thread::sleep(Duration::from_millis(150));
@@ -414,6 +415,16 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
 }
 
 /// Explain common exit codes in plain words.
+/// The exit code in words, plus the engine's own reason when it printed one.
+pub fn explain_exit_with(code: Option<i32>, reason: &str) -> String {
+    let base = explain_exit(code);
+    if reason.is_empty() || code == Some(0) || code.is_none() {
+        base
+    } else {
+        format!("{base} Reason: {reason}")
+    }
+}
+
 pub fn explain_exit(code: Option<i32>) -> String {
     match code {
         Some(0) => "The game closed normally.".into(),
@@ -421,6 +432,14 @@ pub fn explain_exit(code: Option<i32>) -> String {
         Some(c) => {
             let u = c as u32;
             let what = match u {
+                321 => "KytyPS5 stopped with a fatal error",
+                0x8013_1623 => "SharpEmu stopped itself (.NET fail-fast)",
+                0xE043_4352 => "unhandled .NET exception in the engine",
+                0xC000_0006 => "the game files could not be read — is the drive asleep or unplugged?",
+                0xC000_0374 => "memory corruption inside the engine",
+                0xC000_0094 => "division by zero inside the engine",
+                0xC000_007B => "wrong DLL or 32/64-bit mix next to the engine",
+                0xC000_0142 => "a DLL failed to start (reinstall the engine)",
                 0xC000_0005 => "access violation (the game or engine crashed)",
                 0xC000_001D => "illegal instruction — try CPU compatibility mode",
                 0xC000_0409 => "stack buffer overrun / fast fail",
@@ -439,6 +458,16 @@ pub fn explain_exit(code: Option<i32>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_codes_in_words() {
+        assert!(explain_exit(Some(321)).contains("KytyPS5 stopped with a fatal error"));
+        assert!(explain_exit(Some(-2146232797)).contains("fail-fast"));
+        assert!(explain_exit(Some(-1073741795)).contains("illegal instruction"));
+        assert!(explain_exit(Some(-1073741818)).contains("drive asleep"));
+        assert!(explain_exit_with(Some(321), "Not implemented (x) · a.cpp:1").ends_with("Reason: Not implemented (x) · a.cpp:1"));
+        assert_eq!(explain_exit_with(Some(0), "noise"), "The game closed normally.");
+    }
 
     #[test]
     fn resolution_parsing() {

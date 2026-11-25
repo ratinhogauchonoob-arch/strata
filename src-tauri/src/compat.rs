@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const ANALYSIS_VERSION: u32 = 1;
+/// Bump when detection changes so saved analyses are redone (2: word-safe engine names, Bedrock).
+pub const ANALYSIS_VERSION: u32 = 2;
 
 // ───────────────────────── binary analysis ─────────────────────────
 
@@ -87,22 +88,31 @@ pub fn find_libraries(b: &[u8]) -> BTreeSet<String> {
 }
 
 fn contains(b: &[u8], s: &str) -> bool {
-    b.windows(s.len()).any(|w| w == s.as_bytes())
+    memchr::memmem::find(b, s.as_bytes()).is_some()
+}
+
+/// Like contains, but the match must stand alone: "Decima" must not match "Decimal".
+fn contains_word(b: &[u8], s: &str) -> bool {
+    let alnum = |c: Option<&u8>| c.is_some_and(|c| c.is_ascii_alphanumeric());
+    memchr::memmem::find_iter(b, s.as_bytes()).any(|i| !alnum(i.checked_sub(1).and_then(|j| b.get(j))) && !alnum(b.get(i + s.len())))
 }
 
 /// Which game engine made the game: from strings in the executable, then from the files around it.
 pub fn detect_engine(b: &[u8], dir: &Path) -> String {
-    let checks: [(&str, &[&str]); 7] = [
-        ("Unreal Engine", &["UnrealEngine", "Unreal Engine", "FEngineLoop", "UE4Game", "UE5Game"]),
-        ("Unity", &["UnityPlayer", "il2cpp", "Unity Technologies"]),
-        ("GameMaker", &["YoYo Games", "YYGames"]),
-        ("Godot", &["Godot Engine"]),
-        ("CRYENGINE", &["CryEngine", "CRYENGINE"]),
-        ("RE Engine", &["RE ENGINE", "via.Application"]),
-        ("Decima", &["Decima"]),
+    // (name, plain substrings, whole words). Words protect short names that occur inside
+    // ordinary words: "Decima" is in "Decimal", which Minecraft's program contains.
+    let checks: [(&str, &[&str], &[&str]); 8] = [
+        ("Unreal Engine", &["UnrealEngine", "Unreal Engine", "FEngineLoop", "UE4Game", "UE5Game"], &[]),
+        ("Unity", &["UnityPlayer", "il2cpp", "Unity Technologies"], &[]),
+        ("Bedrock", &["RenderDragon"], &["Mojang"]),
+        ("GameMaker", &["YoYo Games", "YYGames"], &[]),
+        ("Godot", &["Godot Engine"], &[]),
+        ("CRYENGINE", &["CryEngine", "CRYENGINE"], &[]),
+        ("RE Engine", &["via.Application"], &["RE ENGINE"]),
+        ("Decima", &[], &["Decima"]),
     ];
-    for (name, pats) in checks {
-        if pats.iter().any(|p| contains(b, p)) {
+    for (name, plain, words) in checks {
+        if plain.iter().any(|p| contains(b, p)) || words.iter().any(|w| contains_word(b, w)) {
             return name.into();
         }
     }
@@ -162,6 +172,43 @@ pub struct Findings {
     pub missing_modules: BTreeSet<String>,
     /// Last fatal-looking line from the engine.
     pub last_error: String,
+    /// Why the engine stopped, in its own words, with file paths shortened.
+    /// KytyPS5: the line after "--- Fatal Error ---"; SharpEmu: "Process terminated." /
+    /// "Unhandled exception." / "[LOADER][ERROR]"; AnyPS5: "FATAL:".
+    pub reason: String,
+    #[serde(skip)]
+    pub(crate) reason_rank: u8,
+    #[serde(skip)]
+    pub(crate) expect_reason: bool,
+}
+
+/// Replaces file paths with their file name ("C:\a\src\x.cpp:12" → "x.cpp:12") and drops
+/// stack traces, so reasons stay short and never show folder names.
+pub fn shorten_paths(s: &str) -> String {
+    let s = s.split(" at ").next().unwrap_or(s).split(" --->").next().unwrap_or(s);
+    let words: Vec<String> = s
+        .split_whitespace()
+        .map(|w| {
+            if w.contains('\\') || w.contains(":/") || (w.matches('/').count() >= 2) {
+                let lead: String = w.chars().take_while(|c| matches!(c, '\'' | '"' | '(')).collect();
+                let trail: String = w[lead.len()..].chars().rev().take_while(|c| matches!(c, '\'' | '"' | ')' | ',' | '.')).collect::<Vec<_>>().into_iter().rev().collect();
+                let core = &w[lead.len()..w.len() - trail.len()];
+                let base = core.rsplit(['\\', '/']).next().unwrap_or(core);
+                format!("{lead}{base}{trail}")
+            } else {
+                w.to_string()
+            }
+        })
+        .collect();
+    let mut out = words.join(" ");
+    // Kyty: "Not implemented (x) in file.cpp:12" → "Not implemented (x) · file.cpp:12"
+    if let Some(i) = out.rfind(" in ") {
+        let tail = &out[i + 4..];
+        if !tail.contains(' ') && [".cpp:", ".h:", ".hpp:", ".cc:", ".c:", ".cs:"].iter().any(|e| tail.contains(e)) {
+            out = format!("{} · {tail}", &out[..i]);
+        }
+    }
+    out.chars().filter(|c| !c.is_control()).take(200).collect()
 }
 
 fn after<'a>(line: &'a str, key: &str) -> Option<&'a str> {
@@ -173,7 +220,38 @@ fn first_token(s: &str) -> String {
 }
 
 /// Reads one engine log line and remembers anything that explains a failure.
+fn set_reason(f: &mut Findings, rank: u8, text: &str) {
+    let text = shorten_paths(text.trim());
+    if text.is_empty() || rank < f.reason_rank || (rank == f.reason_rank && !f.reason.is_empty()) {
+        return;
+    }
+    f.reason = text;
+    f.reason_rank = rank;
+}
+
 pub fn scan_line(line: &str, f: &mut Findings) {
+    let t = line.trim();
+    // KytyPS5: the reason is on the line after "--- Fatal Error ---" (src/common/assert.cpp).
+    if f.expect_reason && !t.is_empty() {
+        f.expect_reason = false;
+        set_reason(f, 3, t);
+        f.last_error = f.reason.clone();
+        return;
+    }
+    if t == "--- Fatal Error ---" || t == "--- Error ---" {
+        f.expect_reason = true;
+        return;
+    }
+    // .NET (SharpEmu) stopping itself, and AnyPS5's fatal handler.
+    for key in ["Process terminated.", "Unhandled exception.", "FATAL ERROR:", "FATAL:"] {
+        if let Some(r) = after(t, key).filter(|_| t.starts_with(key)) {
+            let what = if key.starts_with("FATAL") { r.to_string() } else { format!("{} {r}", key.trim_end_matches('.')) };
+            set_reason(f, 2, &what);
+        }
+    }
+    if let Some(r) = after(t, "[LOADER][ERROR]") {
+        set_reason(f, 1, r);
+    }
     // SharpEmu: "Missing HLE export for NID: qCSfqDILlns"
     if let Some(r) = after(line, "Missing HLE export for NID:") {
         let t = first_token(r);
@@ -200,8 +278,8 @@ pub fn scan_line(line: &str, f: &mut Findings) {
             }
         }
     }
-    if low.contains("critical") || low.contains("fatal") || low.contains("unhandled exception") || low.contains("assertion failed") {
-        f.last_error = line.chars().take(300).collect();
+    if (low.contains("critical") || low.contains("fatal") || low.contains("unhandled exception") || low.contains("assertion failed")) && f.reason_rank < 3 {
+        f.last_error = shorten_paths(line);
     }
 }
 
@@ -384,6 +462,44 @@ mod tests {
         fs::write(dir.join("eboot.bin"), b"\x7fELF changed").unwrap();
         assert!(!is_fresh(&a, &dir), "an update invalidates the analysis");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn engine_names_need_whole_words() {
+        let dir = std::env::temp_dir();
+        assert_eq!(detect_engine(b"..DecimalFormat..parseDecimal..", &dir), "", "Decimal is not Decima");
+        assert_eq!(detect_engine(b"..\0Decima\0..", &dir), "Decima");
+        assert_eq!(detect_engine(b"..Copyright Mojang AB..", &dir), "Bedrock");
+        assert_eq!(detect_engine(b"..RenderDragonShaders..", &dir), "Bedrock");
+        assert_eq!(detect_engine(b"..MORE ENGINE..", &dir), "");
+        assert_eq!(detect_engine(b"..libil2cpp.prx..", &dir), "Unity");
+    }
+
+    #[test]
+    fn reads_why_each_engine_stopped() {
+        let mut k = Findings::default();
+        for l in ["[1] libkernel::Something()", "--- Build ---", "Official build KytyPS5", "--- Fatal Error ---",
+                  "Not implemented (desc.format != 0) in D:\\a\\KytyPS5\\src\\gpu\\Texture.cpp:812", "after"] {
+            scan_line(l, &mut k);
+        }
+        assert_eq!(k.reason, "Not implemented (desc.format != 0) · Texture.cpp:812");
+
+        let mut s = Findings::default();
+        scan_line("[LOADER][ERROR] pthread_create: failed to schedule guest thread", &mut s);
+        assert_eq!(s.reason, "pthread_create: failed to schedule guest thread");
+        scan_line("Process terminated. Cannot restore a guest backing view.", &mut s);
+        assert_eq!(s.reason, "Process terminated Cannot restore a guest backing view.", "fail-fast beats a loader error");
+        scan_line("[LOADER][ERROR] later noise", &mut s);
+        assert!(s.reason.starts_with("Process terminated"));
+
+        let mut u = Findings::default();
+        scan_line("Unhandled exception. System.IO.FileNotFoundException: Could not find file 'C:\\Users\\Lucas\\Games\\x.bin'.", &mut u);
+        assert!(!u.reason.contains("Users") && !u.reason.contains("Lucas"), "{}", u.reason);
+        assert!(u.reason.contains("x.bin'"), "{}", u.reason);
+
+        let mut a = Findings::default();
+        scan_line("FATAL: unsupported AGC packet 0x12 on thread 7", &mut a);
+        assert_eq!(a.reason, "unsupported AGC packet 0x12 on thread 7");
     }
 
     #[test]

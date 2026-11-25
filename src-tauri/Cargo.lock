@@ -3713,6 +3713,7 @@ dependencies = [
  "ash",
  "base64 0.22.1",
  "discord-rich-presence",
+ "memchr",
  "memmap2",
  "orbis-pkg",
  "orbis-pkg-util",

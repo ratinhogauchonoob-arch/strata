@@ -24,12 +24,36 @@ pub struct Report {
     pub exit_code: Option<i32>,
     pub missing_functions: Vec<String>,
     pub missing_modules: Vec<String>,
+    /// Why the engine stopped (its own fatal message), with paths and quoted text removed.
+    pub error: String,
     pub gpu_vendor: String,
     pub strata_version: String,
 }
 
+/// The engine's reason, made safe to share: paths are already shortened by compat; here quoted
+/// text (file names, messages with user data) is dropped and only plain ASCII is kept.
+pub fn share_safe_error(reason: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    for c in reason.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => {
+                quote = Some(c);
+                out.push_str("'…'");
+            }
+            None if c.is_ascii() && !c.is_ascii_control() => out.push(c),
+            None if c == '·' => out.push('|'),
+            None => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect()
+}
+
 fn valid_title_id(id: &str) -> bool {
-    id.len() == 9 && id[..4].bytes().all(|b| b.is_ascii_uppercase()) && id[4..].bytes().all(|b| b.is_ascii_digit())
+    // is_ascii first: slicing at byte 4 would panic inside a multi-byte character.
+    id.len() == 9 && id.is_ascii() && id[..4].bytes().all(|b| b.is_ascii_uppercase()) && id[4..].bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Folder names can hold a user name ("C:\Users\Bob\..."); only plain release names are sent.
@@ -73,6 +97,7 @@ pub fn build(game: &crate::games::Game, rec: &GameRecord, a: &Attempt, gpu: &str
         exit_code: a.code,
         missing_functions: a.findings.missing_functions.iter().take(50).cloned().collect(),
         missing_modules: a.findings.missing_modules.iter().take(30).cloned().collect(),
+        error: if a.worked { String::new() } else { share_safe_error(&a.findings.reason) },
         gpu_vendor: gpu_vendor(gpu),
         strata_version: crate::APP_VERSION.into(),
     })
@@ -161,6 +186,14 @@ mod tests {
     use super::*;
     use crate::compat::Findings;
 
+    #[test]
+    fn odd_title_ids_never_panic() {
+        assert!(valid_title_id("PPSA17221"));
+        assert!(!valid_title_id("PPSÁ1722"), "9 bytes with an accent");
+        assert!(!valid_title_id("ppsa17221"));
+        assert!(!valid_title_id(""));
+    }
+
     fn game(id: &str) -> crate::games::Game {
         crate::games::Game {
             id: "D:/Games/G".into(),
@@ -199,6 +232,14 @@ mod tests {
         // A release folder with a path in it is not sent.
         let a2 = Attempt { release: "C:\\Users\\Bob\\kyty".into(), ..a.clone() };
         assert_eq!(build(&game("PPSA04159"), &GameRecord::default(), &a2, "").unwrap().engine_release, "");
+        // The engine's reason goes along, minus quoted text.
+        let a3 = Attempt {
+            findings: Findings { reason: crate::compat::shorten_paths("Unhandled exception. System.IO.FileNotFoundException: Could not find file 'C:\\Users\\Bob\\x.bin'."), ..Default::default() },
+            ..a.clone()
+        };
+        let e = build(&game("PPSA04159"), &GameRecord::default(), &a3, "").unwrap().error;
+        assert!(!e.contains("Bob") && !e.contains("x.bin") && e.contains("FileNotFoundException"), "{e}");
+        assert_eq!(share_safe_error("Not implemented (a != b) · Texture.cpp:812"), "Not implemented (a != b) | Texture.cpp:812");
         // Games without a real title ID are never sent.
         assert!(build(&game(""), &GameRecord::default(), &a, "").is_none());
         assert!(build(&game("PATH-1234"), &GameRecord::default(), &a, "").is_none());

@@ -341,7 +341,7 @@ const T = [
   // ── Community ──
   ["Share results with other players and show what you play. Everything here is off unless you turn it on.", "Comparte resultados con otros jugadores y muestra a qué juegas. Todo aquí está apagado hasta que lo enciendas.", "Compartilhe resultados com outros jogadores e mostre o que você joga. Tudo aqui fica desligado até você ligar."],
   ["Share test results", "Compartir resultados de pruebas", "Compartilhar resultados de testes"],
-  ["After a game closes, send the game, engine, result and what the engine was missing. No name, no file paths, no logs. Working games appear on the website's Compatibility page; errors help fix the engines.", "Al cerrar un juego, envía el juego, el motor, el resultado y lo que le faltó al motor. Sin nombre, sin rutas, sin registros. Los juegos que funcionan salen en la página de Compatibilidad de la web; los errores ayudan a mejorar los motores.", "Ao fechar um jogo, envia o jogo, o motor, o resultado e o que faltou no motor. Sem nome, sem caminhos, sem logs. Jogos que funcionam aparecem na página de Compatibilidade do site; os erros ajudam a melhorar os motores."],
+  ["After a game closes, send the game, engine, result, what the engine was missing and its error message (file paths and quoted text removed). No name, no logs. Working games appear on the website's Compatibility page; errors help fix the engines.", "Al cerrar un juego, envía el juego, el motor, el resultado, lo que le faltó al motor y su mensaje de error (sin rutas ni texto entre comillas). Sin nombre, sin registros. Los juegos que funcionan salen en la página de Compatibilidad de la web; los errores ayudan a mejorar los motores.", "Ao fechar um jogo, envia o jogo, o motor, o resultado, o que faltou no motor e a mensagem de erro dele (sem caminhos nem texto entre aspas). Sem nome, sem logs. Jogos que funcionam aparecem na página de Compatibilidade do site; os erros ajudam a melhorar os motores."],
   ["Use everyone's results", "Usar los resultados de todos", "Usar os resultados de todos"],
   ["Download the combined results (twice a day at most) so Strata starts games with the engine that worked for other players.", "Descarga los resultados de todos (máximo dos veces al día) para que Strata abra los juegos con el motor que les funcionó a otros.", "Baixa os resultados de todos (no máximo duas vezes por dia) para o Strata abrir os jogos com o motor que funcionou para outros jogadores."],
   ["Show on Discord", "Mostrar en Discord", "Mostrar no Discord"],
@@ -455,7 +455,8 @@ const T = [
   ["Experimental", "Experimental", "Experimental"],
   ["Fix", "Corrección", "Correção"],
   ["Debug", "Depuración", "Depuração"],
-  ["Strata can send an anonymous result after you play: the game, the engine, whether it worked and what the engine was missing. No name, no files, no logs. Games that work appear on strata.gbxstudios.com/compatibility. You can change this any time in Settings → Community.", "Strata puede enviar un resultado anónimo cuando juegas: el juego, el motor, si funcionó y qué le faltó al motor. Sin nombre, sin archivos, sin registros. Los juegos que funcionan salen en strata.gbxstudios.com/compatibility. Puedes cambiarlo cuando quieras en Ajustes → Comunidad.", "O Strata pode enviar um resultado anônimo depois que você joga: o jogo, o motor, se funcionou e o que faltou no motor. Sem nome, sem arquivos, sem logs. Jogos que funcionam aparecem em strata.gbxstudios.com/compatibility. Dá pra mudar quando quiser em Configurações → Comunidade."],
+  ["the next engine", "el siguiente motor", "o próximo motor"],
+  ["Strata can send an anonymous result after you play: the game, the engine, whether it worked, what the engine was missing and its error message (file paths removed). No name, no files, no logs. Games that work appear on strata.gbxstudios.com/compatibility. You can change this any time in Settings → Community.", "Strata puede enviar un resultado anónimo cuando juegas: el juego, el motor, si funcionó, qué le faltó al motor y su mensaje de error (sin rutas). Sin nombre, sin archivos, sin registros. Los juegos que funcionan salen en strata.gbxstudios.com/compatibility. Puedes cambiarlo cuando quieras en Ajustes → Comunidad.", "O Strata pode enviar um resultado anônimo depois que você joga: o jogo, o motor, se funcionou, o que faltou no motor e a mensagem de erro dele (sem caminhos). Sem nome, sem arquivos, sem logs. Jogos que funcionam aparecem em strata.gbxstudios.com/compatibility. Dá pra mudar quando quiser em Configurações → Comunidade."],
   ["Needs firmware", "Necesita firmware", "Precisa de firmware"],
   ["Less", "Menos", "Menos"],
   ["Too old", "Muy antigua", "Antiga demais"],
@@ -498,6 +499,10 @@ const PREFIX = [
 // Whole lines with numbers inside.
 const RX = [
   [/^(\d+) games found\.$/, "$1 juegos encontrados.", "$1 jogos encontrados."],
+  [/^(\S+) skipped — trying (.+)…$/, "$1 saltado — probando $2…", "$1 pulado — tentando $2…"],
+  [/^(\S+) closed after (\d+) s — trying (.+)…$/, "$1 se cerró a los $2 s — probando $3…", "$1 fechou após $2 s — tentando $3…"],
+  [/^(.+) · worked after (\d+) s$/, "$1 · funcionó tras $2 s", "$1 · funcionou após $2 s"],
+  [/^(.+) · failed after (\d+) s$/, "$1 · falló tras $2 s", "$1 · falhou após $2 s"],
   [/^(\d+) found\.$/, "$1 encontrados.", "$1 encontrados."],
   [/^(\d+) in library$/, "$1 en la biblioteca", "$1 na biblioteca"],
   [/^Applied (.+)\.$/, "Aplicado: $1.", "Aplicado: $1."],
@@ -519,6 +524,12 @@ const RX = [
 const LANGS = { es: 1, pt: 2 };
 let col = 0;
 const EXACT = new Map();
+// Game titles are never translated, even when one matches a UI word ("Control", "Home"…).
+const KEEP = new Set();
+
+export function protect(titles) {
+  for (const t of titles || []) if (t) KEEP.add(String(t).trim());
+}
 
 export function language() {
   return col === 1 ? "es" : col === 2 ? "pt" : "en";
@@ -534,7 +545,7 @@ export function resolve(setting) {
 export function tr(text) {
   if (!col || !text) return text;
   const core = text.trim();
-  if (!core) return text;
+  if (!core || KEEP.has(core)) return text;
   const lead = text.slice(0, text.indexOf(core[0]));
   const trail = text.slice(lead.length + core.length);
   const hit = EXACT.get(core);
@@ -547,7 +558,8 @@ export function tr(text) {
   return text;
 }
 
-const SKIP = "script, style, textarea, .log, .console, .cmd, code, [data-notr]";
+// Log lines are the engines' own words: never translated.
+const SKIP = "script, style, textarea, .log, .console, .cmd, code, #loglines, [data-notr]";
 const ATTRS = ["placeholder", "title", "aria-label"];
 
 function translateNode(n) {
