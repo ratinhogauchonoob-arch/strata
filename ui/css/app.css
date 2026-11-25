@@ -546,3 +546,7 @@ html.tv .hints { font-size: 15px; }
 .page-head { flex-wrap: wrap; }
 .page-head .tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; row-gap: 10px; }
 #view-library .page-head .tools .search { flex: 1 1 220px; min-width: 200px; }
+
+/* update available */
+.chip.update { border-color: color-mix(in srgb, var(--a1) 55%, transparent); color: var(--fg); }
+.chip.update .dot { background: var(--a1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a1) 25%, transparent); }

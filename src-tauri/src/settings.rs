@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const SETTINGS_VERSION: u32 = 3;
+pub const SETTINGS_VERSION: u32 = 4;
 
 /// Engine options. Field names map 1:1 to engine command-line switches (see engine.rs).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -129,7 +129,7 @@ pub struct PerfSettings {
 
 impl Default for PerfSettings {
     fn default() -> Self {
-        Self { ram_limit_enabled: false, ram_limit_gb: 8, ram_mode: "soft".into(), priority: "normal".into() }
+        Self { ram_limit_enabled: false, ram_limit_gb: 8, ram_mode: "soft".into(), priority: "auto".into() }
     }
 }
 
@@ -145,6 +145,10 @@ pub struct UiSettings {
     pub ui_sounds: bool,
     /// Big text, full screen, controller-first ("TV mode").
     pub tv_mode: bool,
+    /// "auto" (follows Windows), "en", "es", "pt".
+    pub language: String,
+    /// Look for a newer Strata on GitHub at start.
+    pub check_updates: bool,
 }
 
 impl Default for UiSettings {
@@ -157,6 +161,8 @@ impl Default for UiSettings {
             clock_24h: true,
             ui_sounds: true,
             tv_mode: false,
+            language: "auto".into(),
+            check_updates: true,
         }
     }
 }
@@ -339,6 +345,12 @@ impl Settings {
 
     /// One-time changes for files written by older versions (runs before sanitize).
     pub fn migrate(&mut self) {
+        if self.version < 4 {
+            // 0.10.1: priority follows the PC unless the player picked something else.
+            if self.perf.priority == "normal" {
+                self.perf.priority = "auto".into();
+            }
+        }
         if self.version < 3 {
             // 0.10 builds before this one shipped Discord off; it is on by default now.
             self.community.discord = true;
@@ -359,6 +371,12 @@ impl Settings {
     /// Clamp values a hand-edited file could break.
     pub fn sanitize(&mut self) {
         self.version = SETTINGS_VERSION;
+        if !["auto", "en", "es", "pt"].contains(&self.ui.language.as_str()) {
+            self.ui.language = "auto".into();
+        }
+        if !["auto", "normal", "above_normal", "high"].contains(&self.perf.priority.as_str()) {
+            self.perf.priority = "auto".into();
+        }
         let fix = |e: &mut EmuSettings| {
             if crate::engine::parse_resolution(&e.resolution).is_none() {
                 e.resolution = "1280x720".into();

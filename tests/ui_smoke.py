@@ -11,6 +11,16 @@ async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else await p.chromium.launch()
         # PS4 support is behind a switch: run the normal build in three sizes, then once with ?ps4
+        # Spanish interface: tabs and settings must be translated, nothing may break
+        pg = await b.new_page(viewport={"width": 1366, "height": 800})
+        pg.on("pageerror", lambda e: problems.append(f"[es] page error: {e}"))
+        await pg.goto("http://localhost:8765/index.html?lang=es")
+        await pg.wait_for_timeout(3600)
+        if (await pg.locator("#tab-library").inner_text()).strip() != "Biblioteca":
+            problems.append("[es] Library tab not translated")
+        if not await pg.locator("#topbar .chip.update").count():
+            problems.append("[es] update chip missing")
+        await pg.close()
         for vw, vh, ps4 in [(1366, 800, False), (1024, 640, False), (1920, 1080, False), (1366, 800, True)]:
             pg = await b.new_page(viewport={"width": vw, "height": vh})
             pg.on("pageerror", lambda e: problems.append(f"[{vw}x{vh}] page error: {e}"))

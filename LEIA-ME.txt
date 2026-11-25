@@ -1,4 +1,4 @@
-STRATA 0.10.0 BETA - launcher (UI propria) com os motores KytyPS5, SharpEmu e AnyPS5
+STRATA 0.10.1 BETA - launcher (UI propria) com os motores KytyPS5, SharpEmu e AnyPS5
 =========================================================
 
 O QUE E

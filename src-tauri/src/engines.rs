@@ -231,7 +231,14 @@ pub fn plan(def: &EngineDef, i: PlanInput) -> Plan {
             if i.emu.perf_overlay {
                 env.push(("SHARPEMU_LOG_VIDEOOUT_FPS".into(), "1".into()));
             }
-            Plan { program: i.exe.to_path_buf(), args: vec![eboot(i.game)], cwd: exe_dir, env, convert: None }
+            // Without this SharpEmu uses the window mode saved by its own GUI, which can be fullscreen.
+            let mode = if i.emu.fullscreen { "borderless" } else { "windowed" };
+            let mut args = vec![format!("--window-mode={mode}")];
+            if let Some((w, h)) = crate::engine::parse_resolution(&i.emu.resolution) {
+                args.push(format!("--resolution={w}x{h}"));
+            }
+            args.push(eboot(i.game));
+            Plan { program: i.exe.to_path_buf(), args, cwd: exe_dir, env, convert: None }
         }
         Kind::ShadPs4 => {
             // shadPS4 keeps its data in "<working folder>/user", so run it from the engine root:
@@ -260,7 +267,14 @@ pub fn plan(def: &EngineDef, i: PlanInput) -> Plan {
             }
             conv.push(eboot(i.game));
             conv.push(out.to_string_lossy().into_owned());
-            let mut env = vec![("ANYPS5_AUTORUN_NO_PAUSE".to_string(), "1".to_string())];
+            let mut env = vec![
+                ("ANYPS5_AUTORUN_NO_PAUSE".to_string(), "1".to_string()),
+                // Set both ways so a value left in the user's environment does not win.
+                (
+                    "ANYPS5_FULLSCREEN".to_string(),
+                    if i.emu.fullscreen { "borderless" } else { "windowed" }.to_string(),
+                ),
+            ];
             if let Some(c) = &i.controls_file {
                 env.push(("ANYPS5_INPUT_CONFIG".into(), c.to_string_lossy().into_owned()));
             }
@@ -402,8 +416,13 @@ mod tests {
 
         let g5 = game("ps5", false);
         let p = plan(def("sharpemu").unwrap(), PlanInput { exe: Path::new("/x/SharpEmu"), game: &g5, emu: &e, dev: &dev, data, controls_file: None, patch_file: "" });
-        assert_eq!(p.args, [eboot(&g5)]);
+        assert_eq!(p.args, ["--window-mode=borderless".to_string(), "--resolution=1280x720".to_string(), eboot(&g5)]);
         assert!(p.env.iter().any(|(k, v)| k == "SHARPEMU_USER_DIR" && v.ends_with("user")));
+        let win = EmuSettings { fullscreen: false, ..Default::default() };
+        let p = plan(def("sharpemu").unwrap(), PlanInput { exe: Path::new("/x/SharpEmu"), game: &g5, emu: &win, dev: &dev, data, controls_file: None, patch_file: "" });
+        assert_eq!(p.args[0], "--window-mode=windowed");
+        let p = plan(def("anyps5").unwrap(), PlanInput { exe: Path::new("/x/relinker"), game: &g5, emu: &win, dev: &dev, data, controls_file: None, patch_file: "" });
+        assert!(p.env.iter().any(|(k, v)| k == "ANYPS5_FULLSCREEN" && v == "windowed"));
 
         let p = plan(def("anyps5").unwrap(), PlanInput { exe: Path::new("/x/relinker"), game: &g5, emu: &e, dev: &dev, data, controls_file: Some("/c.ini".into()), patch_file: "" });
         let conv = p.convert.unwrap();
@@ -411,6 +430,7 @@ mod tests {
         assert_eq!(PathBuf::from(&conv[conv.len() - 1]), p.program);
         assert!(p.program.to_string_lossy().contains("PPSA00001"));
         assert!(p.env.iter().any(|(k, _)| k == "ANYPS5_INPUT_CONFIG"));
+        assert!(p.env.iter().any(|(k, v)| k == "ANYPS5_FULLSCREEN" && v == "borderless"));
 
         let p = plan(def("kyty").unwrap(), PlanInput { exe: Path::new("/x/kyty_emulator"), game: &g5, emu: &e, dev: &dev, data, controls_file: None, patch_file: "" });
         assert_eq!(p.args.last().unwrap(), &eboot(&g5));

@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.10.0%20beta-ff7a2f">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.10.1%20beta-ff7a2f">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-5163f5">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--2.0-2fcb72">
   <img alt="Built with" src="https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-a6abb4">

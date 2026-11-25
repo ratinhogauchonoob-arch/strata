@@ -100,7 +100,7 @@ function defaults() {
     controls: { enabled: false, keys: { ...MKEYS }, swap_cross_circle: false, deadzone: 8 },
     pkg_install_folder: "",
     community: { share: false, use_results: true, asked: false, discord: true }, library_folders: ["C:/Strata/data/Games", "D:/Games"],
-    ui: { accent1: "ember", accent2: "cobalt", boot_style: "duo", reduce_motion: false, clock_24h: true, ui_sounds: true, tv_mode: false },
+    ui: { accent1: "ember", accent2: "cobalt", boot_style: "duo", reduce_motion: false, clock_24h: true, ui_sounds: true, tv_mode: false, language: new URLSearchParams(location.search).get("lang") || "auto", check_updates: true },
     emu: {
       resolution: "1280x720", present_mode: "Mailbox", gpu_index: -1, fullscreen: false, stretch: false, hdr: false, hide_cursor: true,
       vblank_frequency: 0, shader_cache: true, relaxed_shader_float: false, readback_linear: false, readback_tiled: false,
@@ -111,7 +111,7 @@ function defaults() {
       keyboard_player: 0, vibration: 100, speaker_volume: 50, controller_color: "", vulkan_validation: false,
       shader_validation: false, shader_log: "Silent", command_buffer_dump: false, profiler: false, renderdoc: false,
     },
-    perf: { ram_limit_enabled: false, ram_limit_gb: 12, ram_mode: "soft", priority: "normal" },
+    perf: { ram_limit_enabled: false, ram_limit_gb: 12, ram_mode: "soft", priority: "auto" },
     dev: { enabled: true, log_level: "info", capture_engine_log: true, keep_sessions: 20, show_command_line: false },
     auto_profile: "",
     games: Object.fromEntries(demoGames.map((g, i) => [g.id, { favorite: i === 2, last_played: null, play_seconds: i * 4000, launches: i, status: g._status, note: "", emu: null, perf: null, engine: "", good_engine: i === 1 ? "kyty" : "", controls: null }])),
@@ -140,7 +140,7 @@ async function mock(cmd, a) {
   }
   switch (cmd) {
     case "bootstrap":
-      return { app: "Strata", version: "0.10.0", channel: "beta", ps4: MPS4, platform: "web", data_dir: "C:/Strata/data", games_dir: "C:/Strata/data/Games", settings: structuredClone(mset), engine: "C:/Strata/data/engine/KytyPS5-Windows-x64/kyty_emulator.exe", running: mrun };
+      return { app: "Strata", version: "0.10.1", channel: "beta", ps4: MPS4, platform: "web", data_dir: "C:/Strata/data", games_dir: "C:/Strata/data/Games", settings: structuredClone(mset), engine: "C:/Strata/data/engine/KytyPS5-Windows-x64/kyty_emulator.exe", running: mrun };
     case "save_settings": mset = structuredClone(a.settings); mlog("debug", "settings", "saved"); return structuredClone(mset);
     case "system_info": return demoSys;
     case "auto_profile": return demoProfile;
@@ -210,6 +210,7 @@ async function mock(cmd, a) {
     case "library_states": return Object.fromEntries(demoGames.map((g, i) => [g.id, i === 1 ? { state: "worked", engine: "kyty" } : i === 3 ? { state: "failed", engine: "" } : { state: "untested", engine: "" }]));
     case "stats": return { games: 7, total_seconds: 98000, launches: 21, worked: 1, failed: 1, untested: 5, top: demoGames.slice(0, 5).map((g, i) => ({ id: g.id, title: g.title, seconds: (5 - i) * 9000, launches: 5 - i })), engines: { kyty: [6, 4], sharpemu: [3, 1] }, made_with: { "Unreal Engine": 3, Unity: 2 } };
     case "discord_available": return false;
+    case "check_update": return { available: true, current: "0.10.1", latest: "v0.10.2-beta", url: "https://github.com/ratinhogauchonoob-arch/strata/releases", prerelease: true };
     case "backup_list": return mBackups;
     case "backup_create": {
       const g = demoGames.find((x) => x.id === a.gameId);

@@ -320,7 +320,8 @@ pub fn launch(req: LaunchRequest, on_exit: impl FnOnce(ExitInfo) + Send + 'stati
     let mut child = cmd.spawn().map_err(|e| format!("Could not start {}: {e}", req.engine_name))?;
 
     let limit = req.perf.ram_limit_enabled.then(|| (req.perf.ram_limit_gb, crate::memcap::parse_mode(&req.perf.ram_mode)));
-    let (guard, notes) = crate::memcap::apply(&child, limit, &req.perf.priority);
+    let priority = crate::memcap::resolve_priority_here(&req.perf.priority);
+    let (guard, notes) = crate::memcap::apply(&child, limit, &priority);
     for n in &notes {
         logs::info("perf", n);
     }

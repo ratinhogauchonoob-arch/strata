@@ -189,3 +189,49 @@ mod tests {
         assert_eq!(std::mem::size_of::<win::ExtendedLimit>(), 144);
     }
 }
+
+/// True for laptop CPUs: Intel "…H/HX/U/P" and AMD Ryzen "…H/HS/HX/U" model numbers.
+pub fn is_laptop_cpu(brand: &str) -> bool {
+    brand.split(|c: char| c.is_whitespace() || c == '-').any(|w| {
+        let w = w.trim().to_ascii_uppercase();
+        let digits = w.chars().take_while(|c| c.is_ascii_digit()).count();
+        digits >= 4 && matches!(&w[digits..], "H" | "HS" | "HX" | "U" | "P" | "HK")
+    })
+}
+
+/// "auto" priority: High where the engine competes for a small machine (16 GB or less, or a laptop CPU).
+pub fn resolve_priority(setting: &str, cpu: &str, ram_mb: u64) -> String {
+    if setting != "auto" {
+        return setting.to_string();
+    }
+    if ram_mb <= 16 * 1024 + 512 || is_laptop_cpu(cpu) { "high".into() } else { "above_normal".into() }
+}
+
+pub fn resolve_priority_here(setting: &str) -> String {
+    if setting != "auto" {
+        return setting.to_string();
+    }
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_all();
+    let cpu = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
+    resolve_priority(setting, &cpu, sys.total_memory() / (1024 * 1024))
+}
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    #[test]
+    fn auto_priority() {
+        assert!(is_laptop_cpu("AMD Ryzen 7 7735HS with Radeon Graphics"));
+        assert!(is_laptop_cpu("12th Gen Intel(R) Core(TM) i7-12700H"));
+        assert!(is_laptop_cpu("Intel(R) Core(TM) i5-8265U CPU @ 1.60GHz"));
+        assert!(!is_laptop_cpu("AMD Ryzen 7 5700X 8-Core Processor"));
+        assert!(!is_laptop_cpu("Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz"));
+        assert_eq!(resolve_priority("auto", "AMD Ryzen 7 5700X", 32768), "above_normal");
+        assert_eq!(resolve_priority("auto", "AMD Ryzen 7 5700X", 16000), "high");
+        assert_eq!(resolve_priority("auto", "AMD Ryzen 7 7735HS", 32768), "high");
+        assert_eq!(resolve_priority("normal", "AMD Ryzen 7 7735HS", 8000), "normal");
+    }
+}

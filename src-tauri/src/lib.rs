@@ -5,6 +5,7 @@ pub mod community;
 pub mod compat;
 pub mod controls;
 pub mod discord;
+mod update;
 pub mod display;
 pub mod download;
 pub mod engine;
@@ -330,6 +331,11 @@ fn stats(state: State<AppState>) -> Stats {
     st.top.sort_by(|a, b| b.seconds.cmp(&a.seconds).then(b.launches.cmp(&a.launches)));
     st.top.truncate(10);
     st
+}
+
+#[tauri::command]
+async fn check_update() -> Result<update::UpdateInfo, String> {
+    tauri::async_runtime::spawn_blocking(update::check).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1228,6 +1234,7 @@ pub fn run() {
             library_states,
             stats,
             discord_available,
+            check_update,
             compat_reset,
             pick_pkg,
             pick_patch,

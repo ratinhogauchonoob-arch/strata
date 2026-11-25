@@ -35,3 +35,4 @@
 - community.rs: Report built from Attempt (title id must match AAAA00000, release must be a plain folder name); send() and refresh() run on threads; community.json cached 12 h; merged into scoring (others>0 → "high").
 - Site API: POST /api/compat/report (throttle 60/h), GET /api/compat/knowledge. Public /compatibility shows worked only; /admin/compatibility shows errors.
 - discord.rs APP_ID empty = off. Settings: community.{share,use_results,asked,discord}, ui.tv_mode (html.tv zoom 1.32, F9).
+- 0.10.1: ui/js/i18n.js translates the UI at draw time (English source text → es/pt table; add rows [en, es, pt]). Mock: index.html?lang=es. update.rs checks GitHub releases (REPO const). memcap::resolve_priority handles "auto". Settings v4.

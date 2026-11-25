@@ -2,6 +2,7 @@ import { invoke, listen, fileSrc, win, isApp } from "./api.js";
 import * as nav from "./nav.js";
 import { playBoot, PALETTE } from "./boot.js";
 import { SECTIONS, TAG_TEXT, ACCENTS } from "./schema.js";
+import * as i18n from "./i18n.js";
 
 // ───────────────────────── tiny DOM helper (text is always textContent, never HTML) ─────────────────────────
 function h(tag, attrs = {}, ...kids) {
@@ -176,7 +177,12 @@ function renderTop() {
     title: "Hardware profile",
     onclick: () => { S.section = "profile"; S.perGame = null; go("settings"); },
   }, h("span", { class: "dot" }), gpu ? (gpu.gpu_name ? shortGpu(gpu.gpu_name) + " · " : "") + gpu.label : S.loaded ? "Hardware unknown" : "Checking PC…");
+  const upd = S.update?.available ? h("button", {
+    class: "chip update", "data-nav": true, title: "Open the download page",
+    onclick: () => invoke("open_url", { url: S.update.url }).catch((e) => toast(String(e), "err")),
+  }, h("span", { class: "dot" }), "Update " + S.update.latest.replace(/^v/, "")) : null;
   const status = h("div", { class: "status", "data-tauri-drag-region": true },
+    upd,
     chip,
     nav.pad.connected ? h("span", { class: "chip", title: nav.pad.name }, h("span", { class: "dot", style: { background: "var(--a2)" } }), "Controller") : null,
     h("span", { class: "clock", id: "clock", "data-tauri-drag-region": true }, clock()),
@@ -649,6 +655,7 @@ function field(f, target, locked) {
     } else set(S.settings, f.key, v);
     if (f.key.startsWith("ui.")) applyTheme();
     if (f.key === "dev.enabled") renderTop();
+    if (f.key === "ui.language") { save(true).then(() => location.reload()); return; }
     save();
     if (S.perGame || SECTIONS.find((s) => s.id === S.section)?.fields?.some((x) => x.requires === f.key)) renderPane();
   };
@@ -1470,6 +1477,7 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
   S.boot = await invoke("bootstrap");
   S.settings = S.boot.settings;
   S.running = S.boot.running;
+  S.lang = i18n.start(S.settings.ui.language);
   applyTheme();
   const u = S.settings.ui;
   const bootDone = playBoot({ style: u.boot_style, accent1: u.accent1, accent2: u.accent2, version: S.boot.version + (S.boot.channel ? " " + S.boot.channel : ""), reduceMotion: u.reduce_motion });
@@ -1521,4 +1529,16 @@ window.addEventListener("unhandledrejection", (e) => log("error", `UI promise re
   renderRunning();
   go("home");
   if (S.settings.first_run) renderWizard();
+  if (S.settings.ui.check_updates) checkUpdate();
 })();
+
+async function checkUpdate() {
+  const u = await invoke("check_update").catch((e) => { log("debug", `Update check failed: ${e}`); return null; });
+  if (!u) return;
+  S.update = u;
+  if (u.available) {
+    log("info", `Strata ${u.latest} is available (this is ${u.current}).`);
+    toast(`Strata ${u.latest.replace(/^v/, "")} is out. Click "Update" at the top.`, "ok");
+    renderTop();
+  }
+}

@@ -17,7 +17,7 @@ export const SECTIONS = [
     id: "display", group: "Engine", title: "Display", perGame: true,
     lead: "Window size and how frames reach the screen.",
     fields: [
-      { key: "emu.resolution", type: "select", label: "Resolution", options: RES, tag: "fps-down", help: "Higher sizes look sharper but cost the most performance. 1280×720 is the safest." },
+      { key: "emu.resolution", type: "select", label: "Resolution", options: RES, tag: "fps-down", help: "Window and output size for KytyPS5 and SharpEmu. Higher sizes look sharper but cost performance. 1280×720 is the safest on laptops." },
       { key: "emu.present_mode", type: "select", label: "Presentation", options: [["Mailbox", "Mailbox — smooth, no tearing"], ["Immediate", "Immediate — fastest, may tear"], ["Fifo", "Fifo — locked to refresh rate"]], help: "Immediate gives the most frames; Fifo adds input delay." },
       { key: "emu.gpu_index", type: "gpu", label: "Graphics card", help: "On laptops pick the dedicated GPU, never the integrated one." },
       { key: "emu.fullscreen", type: "toggle", label: "Fullscreen", help: "Borderless fullscreen on the current monitor." },
@@ -52,7 +52,7 @@ export const SECTIONS = [
     id: "performance", group: "Engine", title: "Performance", perGame: true, custom: "ram",
     lead: "Memory limit, process priority and CPU compatibility.",
     fields: [
-      { key: "perf.priority", type: "select", label: "Process priority", options: [["normal", "Normal"], ["above_normal", "Above normal"], ["high", "High"]], tag: "fps-up", help: "Higher priority can smooth frame times when other apps are open." },
+      { key: "perf.priority", type: "select", label: "Process priority", options: [["auto", "Automatic"], ["normal", "Normal"], ["above_normal", "Above normal"], ["high", "High"]], tag: "fps-up", help: "Automatic uses High on laptops and PCs with 16 GB of RAM or less, where the engine needs all the CPU it can get." },
       { key: "emu.amd_cpu_compat", type: "toggle", label: "CPU compatibility mode", tag: "fix", help: "Turn on with Intel CPUs if a game closes right after starting." },
       { key: "emu.guest_tsc", type: "toggle", label: "Console timer rate", tag: "fix", help: "Fixes games that run too fast. Turn off if a game becomes slow." },
       { key: "emu.red_zone", type: "toggle", label: "Stack red-zone protection", tag: "fix", help: "Prevents some crashes on Windows. Turn on only for games that crash." },
@@ -88,13 +88,15 @@ export const SECTIONS = [
   { id: "backups", group: "Launcher", title: "Saves & backups", custom: "backups", perGame: true, lead: "Copies game saves (and, if you want, shader caches) into one file you can put back later." },
   {
     id: "appearance", group: "Launcher", title: "Appearance", custom: "appearance", perGame: false,
-    lead: "Colors, boot animation and motion.",
+    lead: "Language, colors, boot animation and motion.",
     fields: [
       { key: "ui.boot_style", type: "select", label: "Boot animation", options: [["duo", "Duo — your two accents"], ["spectrum", "Spectrum — all six colors"], ["off", "Off"]], help: "Shown every time Strata starts. Any key skips it." },
       { key: "ui.reduce_motion", type: "toggle", label: "Reduce motion", help: "Shorter, calmer animations." },
       { key: "ui.ui_sounds", type: "toggle", label: "Interface sounds", help: "Soft clicks when moving around." },
       { key: "ui.clock_24h", type: "toggle", label: "24-hour clock" },
       { key: "ui.tv_mode", type: "toggle", label: "TV mode", help: "Bigger text and controls for playing on a TV with a controller. F9 turns it on and off." },
+      { key: "ui.language", type: "select", label: "Language", options: [["auto", "Automatic (Windows)"], ["en", "English"], ["es", "Español"], ["pt", "Português"]], help: "Language of the Strata interface. Engines and games keep their own language." },
+      { key: "ui.check_updates", type: "toggle", label: "Check for updates", help: "Looks at Strata's GitHub releases at start and shows “Update” at the top when a new version is out." },
     ],
   },
   {

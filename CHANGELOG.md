@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1 Beta — 2026-11-25
+- **Español y Português:** the interface speaks Spanish and Portuguese (Settings → Appearance → Language; Automatic follows Windows).
+- **Update notice:** Strata checks its GitHub releases at start and shows “Update” at the top when a new version is out (Settings → Appearance to turn it off).
+- **Process priority: Automatic** (new default) uses High on laptops and PCs with 16 GB of RAM or less, where the engine needs all the CPU it can get.
+- **Resolution** now also sets SharpEmu's window size, not only KytyPS5's.
+- Fixed: SharpEmu and AnyPS5 always opened in fullscreen even with **Fullscreen** off. Strata now tells every engine whether to open in a window or fullscreen (F11 still switches while playing).
+
 ## 0.10.0 Beta — 2026-11-21
 - **Smart engine choice:** Strata reads each game's `eboot.bin` (system functions, libraries, which game engine made it) in the background. When an engine fails, Strata records what it was missing; other games that need the same functions start with a better engine. After the first launch, a game opens straight in the engine that worked. Everything is kept in plain files under `data/compat` that you can share.
 - New per-game **Compatibility** page: what the game needs, a chance per engine, the last tests, and "Test engines again".
